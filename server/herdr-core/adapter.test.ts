@@ -1128,15 +1128,21 @@ describe("herdr-core adapter, new and closed terminals", () => {
   });
 
   it("starts a new tab in the app's space, where that space's first pane works, and one in Other terminals on its own", async () => {
-    const { socket, runs } = await living([terminal("t1", { cwd: "/repo/api" })]);
+    const { socket, runs } = await living([terminal("t1", { cwd: tmpdir() })]);
     const tab = await tabCreate({ workspaceId: "s1", label: "logs" }, socket);
-    expect(runs[0]).toMatchObject({ keep: true, cwd: "/repo/api" });
+    expect(runs[0]).toMatchObject({ keep: true, cwd: tmpdir() });
     expect(runs[0]!["labels"]).toMatchObject({ "herdr.space": "s1", "ovis.tab": "logs" });
     expect(tab.tab).toMatchObject({ workspace_id: "s1", label: "logs" });
     expect(tab.root_pane.pane_id).toBe("t2");
     await tabCreate({ workspaceId: "hc-other" }, socket);
     expect(runs[1]!["labels"]).toEqual({ "herdr.seen": "0" });
     await expect(tabCreate({ workspaceId: "nope" }, socket)).rejects.toMatchObject({ code: "workspace_not_found" });
+  });
+
+  it("starts a new tab at home when the folder the space's first pane worked in is gone", async () => {
+    const { socket, runs } = await living([terminal("t1", { cwd: "/nonexistent/removed-worktree" })]);
+    await tabCreate({ workspaceId: "s1" }, socket);
+    expect(runs[0]!["cwd"]).toBeUndefined();
   });
 
   it("closes a pane, a tab or a workspace by ending each of its terminals and removing its record", async () => {

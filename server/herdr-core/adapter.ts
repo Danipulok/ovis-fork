@@ -994,8 +994,10 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
       const shown = await snapshot();
       const workspace = shown.workspaces.find((candidate) => candidate.workspace_id === workspaceId);
       if (!workspace && workspaceId !== OTHER_WORKSPACE_ID) throw new AdapterError("workspace_not_found", `workspace ${workspaceId} not found`);
-      // a tab in a workspace starts where that workspace's first pane works, as herdr's does
-      const cwd = typeof params["cwd"] === "string" ? params["cwd"] : shown.panes.find((pane) => pane.workspace_id === workspaceId)?.cwd ?? undefined;
+      // a tab in a workspace starts where that workspace's first pane works, as herdr's does;
+      // a folder since removed (a deleted worktree) fails the shell's start with ENOENT, so home instead
+      const worked = shown.panes.find((pane) => pane.workspace_id === workspaceId)?.cwd;
+      const cwd = typeof params["cwd"] === "string" ? params["cwd"] : worked && existsSync(worked) ? worked : undefined;
       const label: Record<string, string> = typeof params["label"] === "string" && params["label"] ? { [TAB_NAME_LABEL]: params["label"] } : {};
       // "Other terminals" is no space of the app's: a tab there is a terminal of its own
       // with the workspace's name, which stays when the tab the name was given in closes (snapshot.ts `groups`)
