@@ -3,6 +3,7 @@ import "./RelayShell.css";
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
+import { typedPairCode } from "../../shared/relay-pair-code.ts";
 import { GLOBAL_RELAY } from "../../shared/relay-regions.ts";
 import { myPcs, type MyPc } from "../lib/account/myPcs.ts";
 import type { AccountProvider } from "../lib/account/store.ts";
@@ -72,13 +73,19 @@ export function CodeEntry({ failure, looking = false, onSubmit, back, titleTag: 
     event.preventDefault();
     if (!looking) onSubmit((event.currentTarget.elements.namedItem("code") as HTMLInputElement).value);
   };
+  // reformatted only while typing at the end: a caret moved back stays where it was
+  const type = (event: FormEvent<HTMLInputElement>): void => {
+    const field = event.currentTarget;
+    if (field.selectionStart !== field.value.length) return;
+    field.value = typedPairCode(field.value, (event.nativeEvent as InputEvent).inputType?.startsWith("delete") ?? false);
+  };
   return (
     <>
       {!omitHeading && <Title className="relay-shell-title" id={titleId}>{t("Pair with a code")}</Title>}
       <p className="relay-shell-copy">{t("On the PC, open Settings → Devices and PCs → Add a connection → Ovis relay and type the code it shows.")}</p>
       <form id={formId} className="relay-shell-code-form" onSubmit={submit}>
         <label className="relay-shell-field-label" htmlFor={`${id}-code`}>{label}</label>
-        <input id={`${id}-code`} name="code" className="input relay-shell-code-input" aria-label={label} placeholder="XXXXX-XXXXX" disabled={looking} autoComplete="off" autoCapitalize="characters" autoCorrect="off" spellCheck={false} maxLength={32} required autoFocus />
+        <input id={`${id}-code`} name="code" className="input relay-shell-code-input" aria-label={label} placeholder="XXXXX-XXXXX" disabled={looking} autoComplete="off" autoCapitalize="characters" autoCorrect="off" spellCheck={false} maxLength={32} required autoFocus onInput={type} />
         {failure !== null && <p className="account-error" role="alert">{codeFailureText(t, failure)}</p>}
         {back !== undefined && <div className="relay-shell-actions"><button type="submit" className="btn btn-primary" aria-busy={looking ? "true" : undefined} disabled={looking}>{looking ? t("Looking for the PC…") : t("Pair")}</button>{back}</div>}
       </form>

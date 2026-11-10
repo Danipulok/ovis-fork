@@ -95,6 +95,15 @@ export function formatPairCode(code: string): string {
   return `${code.slice(0, 5)}-${code.slice(5)}`;
 }
 
+/**
+ * The code field as it is typed: upper case, and the dash shown once the first group is in, so nobody
+ * has to guess whether to type it. A dash just deleted is not put back, or Backspace could not pass it.
+ */
+export function typedPairCode(input: string, deleting: boolean): string {
+  const text = input.toUpperCase().replace(/[^0-9A-Z]/g, "");
+  return text.length > 5 || (text.length === 5 && !deleting) ? formatPairCode(text) : text;
+}
+
 /** A fresh code; rejection sampling keeps every character uniform. */
 export function randomPairCode(random: (bytes: number) => Uint8Array = (n) => crypto.getRandomValues(new Uint8Array(n))): string {
   let code = "";
