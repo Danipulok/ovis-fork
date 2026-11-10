@@ -28,7 +28,7 @@ const { NO_HOST, BUSY, DROPPED } = PAIR_CLOSE;
 const EXCHANGE_MS = 30_000;
 
 export interface TypedCodeOptions {
-  /** the relay the PC holds its code on: Ovis's own, where the PC meets the hosted app */
+  /** the relay the PC holds its code on: Ovis's global one unless named (a self-hosted app's own, `ovis-relay`) */
   relay?: string;
   signal?: AbortSignal;
   connect?: (url: string) => RelaySocket;

@@ -218,6 +218,8 @@ export interface RelayShellMount {
   reload?: () => Promise<void>;
   /** finds a PC by a typed code (pairCode.ts); tests hand in their own */
   findByCode?: typeof offerFromCode;
+  /** the relay typed codes are looked up on; the page's `ovis-relay` meta by default (pairCode.ts) */
+  codeRelay?: string;
   /** this client's account key and sign-in; the `ovis-account` database by default */
   accountStore?: AccountStore;
   /** the account service's origin; the page's `ovis-account-service` meta by default (shellAccountServiceOf), and no sign-in without one */

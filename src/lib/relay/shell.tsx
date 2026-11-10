@@ -21,7 +21,7 @@ import { enrollmentOf, indexedDeviceStore, indexedPendingPush, ServerIdentityCha
 import { failureOf, forgedOffer, forgetsDevice, iosBrowserTab, keyMismatch, offerOf, pairsAgainWithoutKey, shellEntry, sheetContext, keepSheetContext, typedJoin, keepTypedJoin, dashboardHash, keepConfirmedPc, takeConfirmedPc, keepDeviceOnlyPc, deviceOnlyPc, keepConfirmedSignIn, confirmedSignIn } from "./shellState.ts";
 import type { Attempt, RelayShellMount, RelayShellState, SheetJoin } from "./shellState.ts";
 import { openRelayTransport, type RelayTransport } from "./transport.ts";
-import { offerFromCode, TypedCodeError } from "./pairCode.ts";
+import { offerFromCode, shellRelayOf, TypedCodeError } from "./pairCode.ts";
 import { ConsentChangedError, createAccountController } from "./accountController.ts";
 import { createPcSweep } from "./pcSweep.ts";
 import { createUpdateFlow, loadObservedVersions, observedVersions, reloadPage, freshShellNext, forgetSavedPc } from "./updateFlow.ts";
@@ -53,6 +53,7 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   const directSocket = nativeDirectSocket();
   const directTailnet = directSocket ? nativeDirectTailnet() : undefined;
   const findByCode = mount.findByCode ?? offerFromCode;
+  const codeRelay = mount.codeRelay ?? shellRelayOf(document);
   const pendingPush = mount.pendingPush ?? indexedPendingPush;
   const registerPending = (serverId: string): void => {
     // with this device's alert choices, as the app's own registration sends them, which then skips it
@@ -380,7 +381,7 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     if (shown?.kind !== "code-entry") return;
     const controller = new AbortController(); opening = controller; codeOffer = null;
     show({ kind: "code-looking" });
-    findByCode(input, { signal: controller.signal }).then((offer) => {
+    findByCode(input, { signal: controller.signal, ...(codeRelay ? { relay: codeRelay } : {}) }).then((offer) => {
       if (controller.signal.aborted) return;
       codeOffer = offer; show({ kind: "code-compare", offer });
     }, (error: unknown) => { if (!controller.signal.aborted) show({ kind: "code-entry", failure: error instanceof TypedCodeError ? error.failure : "unreachable" }); });
