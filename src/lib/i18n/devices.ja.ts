@@ -169,7 +169,7 @@ export const DEVICES_JA: Record<string, string> = {
   "New code to type": "新しい入力コード",
   "Hide the code": "コードを隠す",
   "Code to type": "入力するコード",
-  "On the other device, open app.ovis.sh, choose Pair with a code and type it. Expires in {time}. It works once.": "もう一方のデバイスで app.ovis.sh を開き、「コードでペアリング」を選んで入力してください。{time} で期限切れになり、使えるのは一度だけです。",
+  "On the other device, open {app}, choose Pair with a code and type it. Expires in {time}. It works once.": "もう一方のデバイスで {app} を開き、「コードでペアリング」を選んで入力してください。{time} で期限切れになり、使えるのは一度だけです。",
   "That device then shows an ID: pair only if it matches this PC's ID below, every group.": "するとそのデバイスに ID が表示されます。下のこの PC の ID とすべてのまとまりが一致する場合だけペアリングしてください。",
   "Disconnect from all PCs": "すべての PC から切断",
   "Disconnect everywhere?": "すべてから切断しますか？",

@@ -223,8 +223,9 @@ long as it; the PC checks that code is still the pending one before it sends the
 device that knew the code it ran out otherwise. Wrong typed codes do not count toward the 20 failed
 relay pairings that pause QR pairing. A code is a relay control like the QR code: made on the PC or
 a direct connection, never through the relay (`local_required`) or by a Portal visitor. The PC
-offers codes only on `relay.ovis.sh` (409 `code_unavailable` on a relay of its own), where the hosted
-app looks for them. The relay sees the nameplate, when the two meet and how big the frames are.
+offers codes on `relay.ovis.sh`, where app.ovis.sh looks for them, and on a relay of its own only when
+`OVIS_RELAY_APP_URL` names an app of its own too, built with the same `OVIS_RELAY_URL` so it looks
+there (`<meta name="ovis-relay">`); a relay of its own with app.ovis.sh answers 409 `code_unavailable`. The relay sees the nameplate, when the two meet and how big the frames are.
 CPace asks for the password's mapping to run in constant time; this one is JavaScript (noble), which
 promises no such thing. The PC works out its first message before a device arrives and every try
 hashes a fresh `sid`, so the relay cannot time it against an arrival or measure one input twice.

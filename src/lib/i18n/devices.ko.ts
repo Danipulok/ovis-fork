@@ -169,7 +169,7 @@ export const DEVICES_KO: Record<string, string> = {
   "New code to type": "새 입력 코드",
   "Hide the code": "코드 숨기기",
   "Code to type": "입력할 코드",
-  "On the other device, open app.ovis.sh, choose Pair with a code and type it. Expires in {time}. It works once.": "다른 기기에서 app.ovis.sh를 열고 코드로 페어링을 골라 입력하세요. {time} 후 만료되며, 한 번만 쓸 수 있습니다.",
+  "On the other device, open {app}, choose Pair with a code and type it. Expires in {time}. It works once.": "다른 기기에서 {app}를 열고 코드로 페어링을 골라 입력하세요. {time} 후 만료되며, 한 번만 쓸 수 있습니다.",
   "That device then shows an ID: pair only if it matches this PC's ID below, every group.": "그러면 그 기기에 ID가 뜹니다. 아래 이 PC의 ID와 모든 묶음이 같을 때만 페어링하세요.",
   "Disconnect from all PCs": "모든 PC에서 끊기",
   "Disconnect everywhere?": "모든 PC에서 끊을까요?",

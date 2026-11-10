@@ -10,6 +10,7 @@ import { callNative, hasNativePlugin } from "../lib/nativeApp.ts";
 import { announcePairingCode, PAIRING_CODE_EVENT, type RelayState } from "../lib/useRelay.ts";
 import type { PairingCode, RelayStatus } from "../../shared/protocol.ts";
 import { isTailnetCarrier } from "../../shared/relay-mux.ts";
+import { GLOBAL_APP } from "../../shared/relay-regions.ts";
 import { decodeOffer } from "../../shared/relay-offer.ts";
 import { QrReveal, ShareLink } from "./PhonePanel.tsx";
 import { KeyId } from "./KeyId.tsx";
@@ -398,7 +399,7 @@ function TypedCode({ reset, onMinted }: { reset: number; onMinted: (code: RelayC
       {code !== null && (
         <div className="relay-typed-code" role="status">
           <p className="relay-typed-code-value" aria-label={t("Code to type")}>{code.code}</p>
-          <p className="settings-hint">{t("On the other device, open app.ovis.sh, choose Pair with a code and type it. Expires in {time}. It works once.", { time: left })}</p>
+          <p className="settings-hint">{t("On the other device, open {app}, choose Pair with a code and type it. Expires in {time}. It works once.", { app: new URL(code.app ?? GLOBAL_APP).host, time: left })}</p>
           <p className="settings-hint">{t("That device then shows an ID: pair only if it matches this PC's ID below, every group.")}</p>
         </div>
       )}

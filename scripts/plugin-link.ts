@@ -19,6 +19,7 @@ import qrcode from "qrcode-generator";
 import { isLoopbackHost } from "../server/access.ts";
 import { accountOsOfPlatform } from "../shared/account-asker.ts";
 import { decodeOffer } from "../shared/relay-offer.ts";
+import { GLOBAL_APP } from "../shared/relay-regions.ts";
 import { importPublicKey } from "../shared/relay-e2ee.ts";
 import { startDeviceSignIn, startLinkPageSignIn } from "../src/lib/account/deviceSignIn.ts";
 import { NEW_PC_MS } from "../src/lib/account/myPcs.ts";
@@ -162,9 +163,9 @@ async function linkWithCode(options: LinkOptions, api: Api): Promise<number> {
       shown = null;
       // the code first: it starts a new pairing, which the offer then carries (RelayPanel CompactRelay);
       // the offer comes whether the code did or not, since its QR code still pairs
-      let code: { code: string; expires_at: string; server_id: string } | null = null;
+      let code: { code: string; expires_at: string; server_id: string; app?: string } | null = null;
       let refused = "";
-      try { code = await api<{ code: string; expires_at: string; server_id: string }>("POST", "/api/relay/code"); } catch (error) {
+      try { code = await api<{ code: string; expires_at: string; server_id: string; app?: string }>("POST", "/api/relay/code"); } catch (error) {
         if (!(error instanceof LocalError)) throw error;
         refused = error.message;
       }
@@ -177,7 +178,7 @@ async function linkWithCode(options: LinkOptions, api: Api): Promise<number> {
       out([
         "",
         ...code !== null
-          ? [`Code to type: ${code.code}   (works once, expires in ${left})`, "On the other device, open app.ovis.sh, choose Pair with a code and type it,", "or scan this QR code with the phone's camera:"]
+          ? [`Code to type: ${code.code}   (works once, expires in ${left})`, `On the other device, open ${new URL(code.app ?? GLOBAL_APP).host}, choose Pair with a code and type it,`, "or scan this QR code with the phone's camera:"]
           : [`No code to type this time (${refused}).`, `Scan this QR code with the phone's camera (expires in ${left}):`],
         "",
         qr(offer.url),

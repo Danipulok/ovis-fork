@@ -45,7 +45,7 @@ import type { ReloadMemory } from "./skew.ts";
 import { checkPc, sweepOf } from "./pcStatus.ts";
 import type { PcStatus } from "./pcStatus.ts";
 import { openRelayTransport } from "./transport.ts";
-import { offerFromCode, TypedCodeError } from "./pairCode.ts";
+import { offerFromCode, shellRelayOf, TypedCodeError } from "./pairCode.ts";
 import type { RelayTransport } from "./transport.ts";
 
 export interface RelayShellMount {
@@ -66,6 +66,8 @@ export interface RelayShellMount {
   reload?: () => Promise<void>;
   /** finds a PC by a typed code (pairCode.ts); tests hand in their own */
   findByCode?: typeof offerFromCode;
+  /** the relay typed codes are looked up on; the page's `ovis-relay` meta by default (pairCode.ts) */
+  codeRelay?: string;
   /** this client's account key and sign-in; the `ovis-account` database by default */
   accountStore?: AccountStore;
   /** the account service's origin; the page's `ovis-account-service` meta by default (shellAccountServiceOf), and no sign-in without one */
@@ -204,6 +206,7 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   /** the offer a typed code found, until its ID is compared on screen */
   let codeOffer: RelayOffer | null = null;
   const findByCode = mount.findByCode ?? offerFromCode;
+  const codeRelay = mount.codeRelay ?? shellRelayOf(document);
 
   // the push subscription this PC's worker kept while no window could hand it over (public/sw.js
   // pushsubscriptionchange): registered with the PC once it is connected, and when the worker says
@@ -694,7 +697,7 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     opening = controller;
     codeOffer = null;
     show({ kind: "code-looking" });
-    findByCode(input, { signal: controller.signal }).then((offer) => {
+    findByCode(input, { signal: controller.signal, ...(codeRelay ? { relay: codeRelay } : {}) }).then((offer) => {
       if (controller.signal.aborted) return;
       codeOffer = offer;
       show({ kind: "code-compare", offer });

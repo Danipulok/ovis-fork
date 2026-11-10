@@ -70,6 +70,12 @@ describe("the shell's page", () => {
     expect(both.indexOf("ovis-account-providers")).toBeLessThan(both.indexOf("</head>"));
   });
 
+  it("names the relay typed codes are looked up on only when the build names a wss one", () => {
+    expect(shellIndexHtml(indexHtml)).not.toContain("ovis-relay");
+    for (const not of ["", "https://relay.example", "not a url"]) expect(shellIndexHtml(indexHtml, { OVIS_RELAY_URL: not })).not.toContain("ovis-relay");
+    expect(shellIndexHtml(indexHtml, { OVIS_RELAY_URL: "wss://relay.example/" })).toContain('<meta name="ovis-relay" content="wss://relay.example" />');
+  });
+
   it("changes nothing else in the page", () => {
     const html = shellIndexHtml(indexHtml, { OVIS_ACCOUNT_SERVICE_URL: "off" }).replace(`  ${SHELL_META}\n  `, "").replace('href="manifest.webmanifest', 'href="/manifest.webmanifest');
     expect(html).toBe(indexHtml);

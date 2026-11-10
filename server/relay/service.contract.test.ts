@@ -864,7 +864,7 @@ async function typeCode(f: Awaited<ReturnType<typeof fixture>>, code: string): P
 async function mintCode(f: Awaited<ReturnType<typeof fixture>>) {
   const response = await f.request("/code", "POST");
   expect(response.status).toBe(200);
-  const body = await response.json() as { code: string; expires_at: string; server_id: string };
+  const body = await response.json() as { code: string; expires_at: string; server_id: string; app?: string };
   expect(body.code).toMatch(/^[0-9A-HJKMNP-TV-Z]{5}-[0-9A-HJKMNP-TV-Z]{5}$/);
   return body;
 }
@@ -918,12 +918,24 @@ it("a new six-digit code takes the typed code off the relay", async () => {
   expect(await typeCode(f, minted.code)).toEqual({ close: PAIR_CLOSE.NO_HOST });
 });
 
-it("a relay that is not Ovis's own has no codes to type", async () => {
+it("a relay that is not Ovis's own has no codes to type while the app is Ovis's, which looks for them on Ovis's relay", async () => {
   const f = await fixture();
   await f.start();
   const response = await f.request("/code", "POST");
   expect(response.status).toBe(409);
   expect(await response.json()).toMatchObject({ error: { code: "code_unavailable" } });
+});
+
+it("a relay of its own beside an app of its own: the code meets on that relay, the reply names that app, and the app pairs through it", async () => {
+  const f = await fixture(false, { app: "https://app.example.test" });
+  await f.start();
+  const minted = await mintCode(f);
+  expect(minted.app).toBe("https://app.example.test");
+  const ownRelay = `wss://127.0.0.1:${f.localRelay.port}`;
+  const offer = await offerFromCode(minted.code, { relay: ownRelay, connect: (url) => new WebSocket(url.replace(ownRelay, `ws://127.0.0.1:${f.localRelay.port}`)) });
+  expect(offer.server_id).toBe(minted.server_id);
+  const paired = await client(f, offer);
+  expect((await paired.http("/api/health")).status).toBe(200);
 });
 
 it("end to end: the hosted app's code screen finds the PC through the relay and the phone pairs with what it gets", async () => {

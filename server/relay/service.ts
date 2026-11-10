@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { DeviceConnection } from "../../shared/access.ts";
 import { encodeOffer } from "../../shared/relay-offer.ts";
 import type { RelayOffer } from "../../shared/relay-offer.ts";
-import { GLOBAL_RELAY, REGIONAL_RELAYS } from "../../shared/relay-regions.ts";
+import { GLOBAL_APP, GLOBAL_RELAY, REGIONAL_RELAYS } from "../../shared/relay-regions.ts";
 import type { RelayStatus } from "../../shared/protocol.ts";
 import type { RequestServices } from "../dispatch.ts";
 import { isJsonObject } from "../http.ts";
@@ -42,8 +42,9 @@ export interface RelayServiceOptions {
   /** The round trip to a relay in ms, or null when it does not answer; `/health` over HTTPS by default. */
   readonly probe?: (relay: string, signal: AbortSignal) => Promise<number | null>;
   /**
-   * The relay typed pairing codes meet on (server/relay/pair-code.ts): Ovis's global one, where the
-   * hosted app looks for them, when this PC is on it; none on a relay of its own. Tests name theirs.
+   * The relay typed pairing codes meet on (server/relay/pair-code.ts): Ovis's global one, where
+   * app.ovis.sh looks for them, when this PC is on it; a relay of its own when this PC also names an
+   * app of its own, built to look there (`ovis-relay` in scripts/shell-build.ts); else none. Tests name theirs.
    */
   readonly pairCodeRelay?: string;
   /**
@@ -449,15 +450,15 @@ export class RelayService {
   }
 
   /**
-   * A code to type on the device being paired (server/relay/pair-code.ts), replacing any showing; null
-   * when this PC's relay has none (it is not Ovis's own).
+   * A code to type on the device being paired (server/relay/pair-code.ts), replacing any showing, with the
+   * app to type it in; null when no app looks for codes on this PC's relay (its own relay, Ovis's app).
    */
-  async pairCode(): Promise<{ code: string; expires_at: string; server_id: string } | null> {
+  async pairCode(): Promise<{ code: string; expires_at: string; server_id: string; app: string } | null> {
     if (!this.enabled || !this.identity || !this.services || this.blocked) throw new Error("Start the relay before pairing.");
-    const relay = this.options.pairCodeRelay ?? (this.relay === GLOBAL_RELAY ? GLOBAL_RELAY : null);
+    const relay = this.options.pairCodeRelay ?? (this.relay === GLOBAL_RELAY || this.app !== GLOBAL_APP ? this.relay : null);
     if (relay === null) return null;
     this.pairCodes ??= new RelayPairCodes({ relay, devices: this.services.devices, offer: (code) => this.offerFor(code), connect: this.options.connect });
-    return { ...await this.pairCodes.mint(), server_id: this.identity.server_id };
+    return { ...await this.pairCodes.mint(), server_id: this.identity.server_id, app: this.app };
   }
 
   /** Takes the code showing off the relay. */

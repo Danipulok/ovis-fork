@@ -169,7 +169,7 @@ export const DEVICES_ZH: Record<string, string> = {
   "New code to type": "新的输入代码",
   "Hide the code": "隐藏代码",
   "Code to type": "要输入的代码",
-  "On the other device, open app.ovis.sh, choose Pair with a code and type it. Expires in {time}. It works once.": "在另一台设备上打开 app.ovis.sh，选择“用代码配对”并输入。{time} 后过期，只能使用一次。",
+  "On the other device, open {app}, choose Pair with a code and type it. Expires in {time}. It works once.": "在另一台设备上打开 {app}，选择“用代码配对”并输入。{time} 后过期，只能使用一次。",
   "That device then shows an ID: pair only if it matches this PC's ID below, every group.": "随后该设备会显示一个 ID：只有与下方本电脑的 ID 每一组都一致时才配对。",
   "Disconnect from all PCs": "从所有 PC 断开",
   "Disconnect everywhere?": "全部断开？",

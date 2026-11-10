@@ -19,6 +19,7 @@ import { dirname, join } from "node:path";
 import type { Plugin } from "vite";
 import { pagePolicy } from "../server/file-view.ts";
 import { accountServiceOrigin, DEFAULT_ACCOUNT_SERVICE, IMMUTABLE_CACHE, REVALIDATE, shellContentSecurityPolicy } from "../server/static.ts";
+import { isWssOrigin } from "../shared/relay-offer.ts";
 import { REGIONAL_APPS } from "../shared/relay-regions.ts";
 
 /** Vite's `--mode` that builds the shell; the build's output directory. */
@@ -47,12 +48,28 @@ export function accountMetas(env: Record<string, string | undefined>): string[] 
   return [`<meta name="ovis-account-service" content="${origin}" />`, ...(providers.length > 0 ? [`<meta name="ovis-account-providers" content="${providers.join(",")}" />`] : [])];
 }
 
+/**
+ * The relay meta the shell is built with: `ovis-relay` from OVIS_RELAY_URL, the self-hosted relay a
+ * PC that names this copy as its app (OVIS_RELAY_APP_URL) holds typed codes on; none without it, or
+ * when it is not a wss origin, and the shell looks codes up on Ovis's global relay.
+ */
+export function relayMetas(env: Record<string, string | undefined>): string[] {
+  const named = env["OVIS_RELAY_URL"];
+  if (!named) return [];
+  let origin: string;
+  try { origin = new URL(named).origin; } catch (error) {
+    if (error instanceof TypeError) return [];
+    throw error;
+  }
+  return isWssOrigin(origin) ? [`<meta name="ovis-relay" content="${origin}" />`] : [];
+}
+
 export function shellIndexHtml(html: string, env: Record<string, string | undefined> = {}): string {
   if (!MANIFEST_LINK.test(html)) throw new Error("index.html must link /manifest.webmanifest for the shell to make it relative");
   const linked = html.replace(MANIFEST_LINK, (_, query: string | undefined) => `<link rel="manifest" href="manifest.webmanifest${query ?? ""}"`);
   const head = linked.indexOf("</head>");
   if (head === -1) throw new Error("index.html must hold a </head>");
-  return `${linked.slice(0, head)}${[SHELL_META, ...accountMetas(env)].map((meta) => `  ${meta}\n`).join("")}  ${linked.slice(head)}`;
+  return `${linked.slice(0, head)}${[SHELL_META, ...accountMetas(env), ...relayMetas(env)].map((meta) => `  ${meta}\n`).join("")}  ${linked.slice(head)}`;
 }
 
 /**
