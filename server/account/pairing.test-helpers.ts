@@ -16,6 +16,7 @@ import type { HttpRequest } from "../../shared/relay-mux-engine.ts";
 import { FrameType, KEY_PROOF_FEATURE, type MuxFrame, type SessionError } from "../../shared/relay-mux.ts";
 import { pairFingerprint, signPairProof } from "../../shared/pair-fingerprint.ts";
 import { decodeOffer } from "../../shared/relay-offer.ts";
+import { GLOBAL_APP } from "../../shared/relay-regions.ts";
 import { readDeviceRegistry } from "../devices.ts";
 import { createServer } from "../index.ts";
 import { RelayService } from "../relay/service.ts";
@@ -98,8 +99,9 @@ export async function pairingPc(options: { rows?: readonly { created_at: string 
   const account = new FakeAccountService();
   const accountFetch = options.accountFetch;
   const port = options.relayPort;
-  const service = port === undefined ? new RelayService({ stateDir, relay: "wss://relay.test", connect: () => idleSocket() })
-    : new RelayService({ stateDir, relay: `wss://127.0.0.1:${port}`, connect: (url) => { const target = new URL(url); return new WebSocket(`ws://127.0.0.1:${port}${target.pathname}${target.search}`); } });
+  // named, since OVIS_RELAY_APP_URL is read when the options leave it out
+  const service = port === undefined ? new RelayService({ stateDir, relay: "wss://relay.test", app: GLOBAL_APP, connect: () => idleSocket() })
+    : new RelayService({ stateDir, relay: `wss://127.0.0.1:${port}`, app: GLOBAL_APP, connect: (url) => { const target = new URL(url); return new WebSocket(`ws://127.0.0.1:${port}${target.pathname}${target.search}`); } });
   const app = createServer({ ...options.server, port: 0, hostname: "127.0.0.1", stateDir, token: options.server?.token ?? "", tailscaleOwner: null, sidecar: false, relay: service,
     accountService: { url: options.accountService ?? "https://account.test", fetch: accountFetch ? (request) => accountFetch(request, account) : account.fetch } });
   const base = `http://127.0.0.1:${app.port}`;

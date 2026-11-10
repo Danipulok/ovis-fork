@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startBunRelay } from "../relay/bun.ts";
 import type { Machine } from "../shared/machines.ts";
+import { GLOBAL_RELAY } from "../shared/relay-regions.ts";
 import type { CompletionTracker } from "./completion.ts";
 import { createServer } from "./index.ts";
 import { bindTestPc, expectPcAddRefused, pcAddCases, type PcAddMode } from "./pc-add-policy.test-helpers.ts";
@@ -15,6 +16,7 @@ import { bounded, deferred } from "./relay/test-helpers.ts";
 import { TailnetPcError, TailnetPcs, tailnetPeers } from "./tailnet-pcs.ts";
 
 const cleanup: (() => void | Promise<void>)[] = [];
+const OWN_RELAY = "wss://relay.own.test";
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 
 function stateDir(): string {
@@ -49,7 +51,7 @@ it("lists only online, untagged PCs of this PC's own Tailscale login, never phon
  * PC B with the relay on, reached as `tailscale serve` would bring a request from another node of the
  * tailnet: from loopback, with the asking node's login and its tailnet source address.
  */
-async function pcB(login: string, options: { codeServerId?: string; mode?: PcAddMode } = {}) {
+async function pcB(login: string, options: { codeServerId?: string; mode?: PcAddMode; ownRelay?: boolean; codeRelay?: string } = {}) {
   const relay = startBunRelay({ port: 0, limiters: {
     perAddress: { async limit() { return { success: true }; } },
     global: { async limit() { return { success: true }; } },
@@ -68,7 +70,10 @@ async function pcB(login: string, options: { codeServerId?: string; mode?: PcAdd
   };
   const bState = stateDir();
   if (options.mode === "target-bound") bindTestPc(bState);
-  const service = new RelayService({ stateDir: bState, relay: `wss://127.0.0.1:${relay.port}`, connect: local, pairCodeRelay: `wss://127.0.0.1:${relay.port}` });
+  // on a relay of its own beside an app of its own, it holds its codes on that relay
+  const service = options.ownRelay
+    ? new RelayService({ stateDir: bState, relay: OWN_RELAY, app: "https://app.own.test", connect: local })
+    : new RelayService({ stateDir: bState, relay: `wss://127.0.0.1:${relay.port}`, connect: local, pairCodeRelay: `wss://127.0.0.1:${relay.port}` });
   const b = createServer({ port: 0, hostname: "127.0.0.1", stateDir: bState, token: "", tailscaleOwner: "me@example.com", sidecar: false, registerBridge: false, relay: service,
     accountOpensAll: options.mode !== undefined && options.mode !== "off", platform: "linux" });
   cleanup.push(async () => { await service.shutdown(); b.stop(); });
@@ -85,6 +90,8 @@ async function pcB(login: string, options: { codeServerId?: string; mode?: PcAdd
     const answer = await fetch(`${bBase}${url.pathname}${url.search}`, { method: request.method, headers, body: request.body });
     // a PC that names another PC's ID beside its code
     if (url.pathname === "/api/relay/code" && options.codeServerId !== undefined) return Response.json({ ...await answer.json() as object, server_id: options.codeServerId });
+    // a PC that names a relay no PC would hold a code on
+    if (url.pathname === "/api/relay/code" && options.codeRelay !== undefined) return Response.json({ ...await answer.json() as object, relay: options.codeRelay });
     return answer;
   } });
   cleanup.push(() => serve.stop(true));
@@ -134,6 +141,26 @@ it.each(pcAddCases)("Tailnet one-tap PC add follows the live account binding: %s
   // still listed once added: the page tells it apart by its relay ID, and a second add is refused
   expect(await (await ask("GET")).json()).toEqual({ pcs: [listedB] });
   expect(((await (await ask("POST", { url: serveUrl })).json()) as { error: { code: string } }).error.code).toBe("tailnet_already_added");
+});
+
+it("adds a PC on a relay of its own by looking its code up on that relay", async () => {
+  const { b, serveUrl, local } = await pcB("me@example.com", { ownRelay: true });
+  const reached: string[] = [];
+  const { ask } = await pcA([{ name: "pc-b", user: "9007199254740993" }], { "pc-b.tail.ts.net": serveUrl }, (url) => { reached.push(new URL(url).origin); return local(url); });
+  await ask("GET");
+  const added = await ask("POST", { url: serveUrl });
+  expect(added.status).toBe(201);
+  expect((await added.json() as { machine: Machine }).machine).toMatchObject({ kind: "relay", relay: { server_id: b.context.services.relay.serverId() } });
+  expect(reached[0]).toBe(OWN_RELAY);
+});
+
+it("looks a code up on Ovis's relay when the PC names a relay that is not a wss origin", async () => {
+  const { serveUrl, local } = await pcB("me@example.com", { ownRelay: true, codeRelay: `${OWN_RELAY}/elsewhere` });
+  const reached: string[] = [];
+  const { ask } = await pcA([{ name: "pc-b", user: "9007199254740993" }], { "pc-b.tail.ts.net": serveUrl }, (url) => { reached.push(new URL(url).origin); return local(url); });
+  await ask("GET");
+  await ask("POST", { url: serveUrl });
+  expect(reached[0]).toBe(GLOBAL_RELAY);
 });
 
 it("adds nothing when the relay finds another PC than the one that gave the code", async () => {
@@ -265,5 +292,6 @@ it("tells each refusal of the code request in its own failure, never with that P
     const failure = await pcs.code(refusing.url, new Set()).catch((error: unknown) => error) as TailnetPcError;
     expect([refusal.code, failure.failure]).toEqual([refusal.code, expected]);
     expect(failure.message).not.toContain("Unknown relay action");
+    if (expected === "code_unavailable") expect(failure.message).toContain("without an app of its own");
   }
 });

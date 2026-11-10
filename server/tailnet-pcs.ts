@@ -9,6 +9,7 @@
 import { HTTPS_PORTS, tailscaleBinary } from "./tailscale.ts";
 import { SERVER_ID_PATTERN } from "../shared/relay-id.ts";
 import { TargetAccountPcError } from "../shared/relay-channel.ts";
+import { isWssOrigin } from "../shared/relay-offer.ts";
 
 const PROBE_MS = 2500;
 /** an address the list found stays addable this long */
@@ -167,7 +168,7 @@ export class TailnetPcs {
    * The code that PC would show under Connect a device, asked of it as its owner (server/relay/routes.ts
    * /api/relay/code). Its trust is checked again first, Tailscale's word before the PC's: the list may be minutes old.
    */
-  async code(url: string, added: ReadonlySet<string>): Promise<{ code: string; server_id: string }> {
+  async code(url: string, added: ReadonlySet<string>): Promise<{ code: string; server_id: string; relay?: string }> {
     const held = this.found.get(url);
     const peers = tailnetPeers(await this.readStatus());
     if (held === undefined || !peers.some((peer) => peer.dnsName === held.dnsName)) throw new TailnetPcError("not_found", "That PC is no longer one of yours on Tailscale. Look again.");
@@ -182,7 +183,7 @@ export class TailnetPcs {
     } catch {
       throw new TailnetPcError("unreachable", "That PC did not answer. Check that it is on, then try again.");
     }
-    const body = await boundedJson(response) as { code?: unknown; server_id?: unknown; error?: { code?: unknown } } | null;
+    const body = await boundedJson(response) as { code?: unknown; server_id?: unknown; relay?: unknown; error?: { code?: unknown } } | null;
     if (!response.ok || typeof body?.code !== "string" || typeof body.server_id !== "string") {
       // that PC's own words never reach the person. Its health named its relay ID, so it is a current Ovis: a 404 or
       // 405 here comes from something in between, not from its version
@@ -190,10 +191,11 @@ export class TailnetPcs {
       if (refusal === "pc_add_target_bound") throw new TargetAccountPcError();
       if (refusal === "relay_off") throw new TailnetPcError("relay_off", "Turn the relay on on that PC first, under Add a connection.");
       if (refusal === "relay_offline") throw new TailnetPcError("relay_offline", "That PC's relay cannot be reached right now. Try again in a moment.");
-      if (refusal === "code_unavailable") throw new TailnetPcError("code_unavailable", "That PC uses its own relay, which cannot give a code. Add it with its QR code instead.");
+      if (refusal === "code_unavailable") throw new TailnetPcError("code_unavailable", "That PC uses its own relay without an app of its own, so it cannot give a code. Add it with its QR code instead.");
       throw new TailnetPcError("no_code", "That PC could not give a code just now. Try again in a moment.");
     }
-    return { code: body.code, server_id: body.server_id };
+    // a PC on a relay of its own holds the code there; one that names none (an older Ovis) holds it on Ovis's
+    return { code: body.code, server_id: body.server_id, ...(typeof body.relay === "string" && isWssOrigin(body.relay) ? { relay: body.relay } : {}) };
   }
 }
 

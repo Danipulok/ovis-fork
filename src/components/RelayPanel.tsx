@@ -9,6 +9,7 @@ import { t, useT } from "../lib/i18n.ts";
 import { callNative, hasNativePlugin } from "../lib/nativeApp.ts";
 import { announcePairingCode, PAIRING_CODE_EVENT, QR_CODE_ENDED_CHANNEL, tellOtherWindowsQrCodeEnded, type AnnouncedCode, type RelayState } from "../lib/useRelay.ts";
 import type { RelayStatus } from "../../shared/protocol.ts";
+import { GLOBAL_APP, REGIONAL_APPS } from "../../shared/relay-regions.ts";
 import { decodeOffer } from "../../shared/relay-offer.ts";
 import { QrReveal, ShareLink } from "./PhonePanel.tsx";
 import { KeyId } from "./KeyId.tsx";
@@ -413,6 +414,8 @@ function CompactRelay({ qr, qrExpires, failure, reset, onMinted }: { qr: string 
     setBusy(false);
   }, [reset]);
   const deadline = code !== null ? code.expires_at : qrExpires;
+  // a code on this PC's own relay is found only through the app beside it, so that app is named; Ovis's is the default
+  const ownApp = code?.app !== undefined && code.app !== GLOBAL_APP && !Object.values(REGIONAL_APPS).includes(code.app) ? code.app : null;
   useEffect(() => {
     if (deadline === null) return;
     const ms = Date.parse(deadline) - Date.now();
@@ -428,6 +431,7 @@ function CompactRelay({ qr, qrExpires, failure, reset, onMinted }: { qr: string 
   return (
     <div className="relay-pairing-compact" role="status">
       <CompactPair qr={qr} qrLabel={t("QR code that pairs a phone through the relay")} code={code?.code ?? null} codeLabel={t("Code to type")} busy={busy} onRefresh={() => void mint()} />
+      {ownApp !== null && <p className="settings-hint">{t("Type the code in {app}.", { app: new URL(ownApp).host })}</p>}
       {(error ?? failure) !== null && <p className="settings-hint relay-error" role="alert">{error ?? failure}</p>}
     </div>
   );
@@ -493,7 +497,7 @@ function TypedCode({ reset, onMinted }: { reset: number; onMinted: (code: RelayC
       {code !== null && (
         <div className="relay-typed-code" role="status">
           <p className="relay-typed-code-value" aria-label={t("Code to type")}>{code.code}</p>
-          <p className="settings-hint">{t("On the other device, open app.ovis.sh, choose Pair with a code and type it. Expires in {time}. It works once.", { time: left })}</p>
+          <p className="settings-hint">{t("On the other device, open {app}, choose Pair with a code and type it. Expires in {time}. It works once.", { app: new URL(code.app ?? GLOBAL_APP).host, time: left })}</p>
           <p className="settings-hint">{t("That device then shows an ID: pair only if it matches this PC's ID below, every group.")}</p>
         </div>
       )}
