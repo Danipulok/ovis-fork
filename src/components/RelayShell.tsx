@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ChevronRight } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
 
+import { typedPairCode } from "../../shared/relay-pair-code.ts";
 import type { MyPc } from "../lib/account/myPcs.ts";
 import type { AccountProvider } from "../lib/account/store.ts";
 import { useT } from "../lib/i18n.ts";
@@ -90,13 +91,19 @@ function CodeEntry({ failure, onSubmit, back }: { failure: TypedCodeFailure | nu
     field.value = "";
     onSubmit(code);
   };
+  // reformatted only while typing at the end: a caret moved back stays where it was
+  const type = (event: FormEvent<HTMLInputElement>): void => {
+    const field = event.currentTarget;
+    if (field.selectionStart !== field.value.length) return;
+    field.value = typedPairCode(field.value, (event.nativeEvent as InputEvent).inputType?.startsWith("delete") ?? false);
+  };
   return (
     <>
       <h1 className="relay-shell-title">{t("Pair with a code")}</h1>
       <p className="relay-shell-copy">{t("On the PC, open Settings → Devices and PCs → Add a connection → Ovis relay (Connect, or Show a code to type, on an older Ovis). Type the code it shows here. Where the PC uses the Ovis account, sign in to the same account instead.")}</p>
       <form className="relay-shell-code-form" onSubmit={submit}>
         <input name="code" className="relay-shell-code-input" aria-label={t("Code from the PC")} placeholder="XXXXX-XXXXX"
-          autoComplete="off" autoCapitalize="characters" autoCorrect="off" spellCheck={false} maxLength={32} required autoFocus />
+          autoComplete="off" autoCapitalize="characters" autoCorrect="off" spellCheck={false} maxLength={32} required autoFocus onInput={type} />
         {failure !== null && <p className="relay-shell-detail" role="alert">{codeFailureText(t, failure)}</p>}
         <div className="relay-shell-actions">
           <button type="submit" className="btn btn-primary">{t("Pair")}</button>

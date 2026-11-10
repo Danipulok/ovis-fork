@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bytesToHex, hexToBytes, utf8ToBytes } from "@noble/hashes/utils.js";
 import {
   calculateGenerator, cpaceIsk, formatPairCode, generatorString, normalizePairCode, PairCodeGuest, PairCodeHost,
-  PairCodeExpiredError, PairCodeProtocolError, prependLen, randomPairCode, scalarFromLittleEndian, scalarMult, scalarMultVfy, splitPairCode,
+  PairCodeExpiredError, PairCodeProtocolError, prependLen, randomPairCode, scalarFromLittleEndian, scalarMult, scalarMultVfy, splitPairCode, typedPairCode,
 } from "./relay-pair-code.ts";
 
 const hex = (text: string) => hexToBytes(text.replace(/\s+/g, ""));
@@ -64,6 +64,19 @@ describe("the code", () => {
     expect(formatPairCode("AB3DEFGHJK")).toBe("AB3DE-FGHJK");
     expect(splitPairCode("ab3de-fghjk")).toEqual({ nameplate: "AB3", password: "DEFGHJK" });
     expect(() => splitPairCode("AB3DEFGHJ")).toThrow(PairCodeProtocolError);
+  });
+
+  test("the code field shows the dash once the first five are typed, and lets Backspace pass it", () => {
+    expect(typedPairCode("ab3d", false)).toBe("AB3D");
+    expect(typedPairCode("ab3de", false)).toBe("AB3DE-");
+    expect(typedPairCode("AB3DEF", false)).toBe("AB3DE-F");
+    expect(typedPairCode("AB3DE-FGHJK", false)).toBe("AB3DE-FGHJK");
+    // a pasted code with spaces or without its dash
+    expect(typedPairCode(" ab3de fghjk ", false)).toBe("AB3DE-FGHJK");
+    // the dash just deleted stays deleted; one more Backspace takes the fifth character
+    expect(typedPairCode("AB3DE", true)).toBe("AB3DE");
+    expect(typedPairCode("AB3D", true)).toBe("AB3D");
+    expect(typedPairCode("AB3DE-F", true)).toBe("AB3DE-F");
   });
 
   test("a fresh code is canonical", () => {
