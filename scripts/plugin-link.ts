@@ -684,12 +684,12 @@ async function linkWithCode(options: LinkOptions, api: Api): Promise<number> {
     for (;;) {
       // the code first: it starts a new pairing, which the offer then carries (RelayPanel CompactRelay);
       // the offer comes whether the code did or not, since its QR code still pairs
-      let code: ({ code: string; expires_at: string; server_id: string } & ForAccount) | null = null;
+      let code: ({ code: string; expires_at: string; server_id: string; app?: string } & ForAccount) | null = null;
       let refused = "";
       let offer: { url: string; expires_at: string } & ForAccount;
       try {
         try {
-          code = await api<{ code: string; expires_at: string; server_id: string } & ForAccount>("POST", "/api/relay/code");
+          code = await api<{ code: string; expires_at: string; server_id: string; app?: string } & ForAccount>("POST", "/api/relay/code");
           // this run's from here on, by its id. One from an Ovis that names none is told only by the QR code that carries it
           mine = mineOf(undefined, code.pairing?.id);
         } catch (error) {
@@ -716,7 +716,7 @@ async function linkWithCode(options: LinkOptions, api: Api): Promise<number> {
       out([
         "",
         ...code !== null
-          ? [`Code to type: ${code.code}   (works once, expires in ${left})`, `On the other device, open ${appHost(options, offer.url)}, choose Pair with a code and type it,`, "or scan this QR code with the phone's camera:"]
+          ? [`Code to type: ${code.code}   (works once, expires in ${left})`, `On the other device, open ${code.app === undefined ? appHost(options, offer.url) : new URL(code.app).host}, choose Pair with a code and type it,`, "or scan this QR code with the phone's camera:"]
           : [`No code to type this time (${refused}).`, `Scan this QR code with the phone's camera (expires in ${left}):`],
         "",
         qr(offer.url),
