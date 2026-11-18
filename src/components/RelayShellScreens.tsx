@@ -268,7 +268,7 @@ export function RelayShellCardContent({ props, other = null }: RelayShellCardCon
       {state.kind === "code-compare" && (
         <>
           <h1 className="relay-shell-title">{t("Does {name}'s screen show this ID?", { name: pc })}</h1>
-          <p className="relay-shell-copy">{t("The PC shows its ID at the top of Settings → Devices and PCs. Pair only if every group matches.")}</p>
+          <p className="relay-shell-copy">{t("The PC shows its ID under the code. Pair only if every group matches. An older PC shows it only in Settings → Agents → Setup guide: cancel and type the code from there.")}</p>
           <p className="relay-shell-code-id"><KeyId id={state.offer.server_id} label={t("ID of the PC this code found")} /></p>
           <div className="relay-shell-actions"><button type="button" className="btn btn-primary" onClick={onCodeMatch}>{t("It matches")}</button><button type="button" className="btn" onClick={onCancel}>{t("Cancel")}</button></div>
         </>

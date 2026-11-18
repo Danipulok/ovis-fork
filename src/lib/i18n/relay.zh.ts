@@ -84,7 +84,7 @@ export const RELAY_ZH: Record<string, string> = {
   "It adds the devices of your account a few minutes after they join. Try again in a moment.": "账户中的新设备会在几分钟内被添加。请稍后重试。",
   "No number on {name}? Cancel, then tap {name} in your list.": "{name} 上没有数字？请取消，然后在列表中点按 {name}。",
   "Only the PC itself shows its ID, at the top of Settings → Devices and PCs. Marked groups differ.": "只有电脑本身会显示它的 ID，在“设置 → 设备和电脑”的顶部。标记的组不一致。",
-  "The PC shows its ID at the top of Settings → Devices and PCs. Pair only if every group matches.": "电脑会在“设置 → 设备和电脑”的顶部显示它的 ID。只有每一组都一致时才配对。",
+  "The PC shows its ID under the code. Pair only if every group matches. An older PC shows it only in Settings → Agents → Setup guide: cancel and type the code from there.": "电脑会在代码下方显示它的 ID。只有每一组都一致时才配对。旧版电脑只在“设置 → Agent → 设置向导”中显示它：请取消，然后输入那里的代码。",
   "this PC": "这台电脑",
   "It matches": "一致",
   "Does {name}'s screen show this ID?": "{name} 的屏幕上显示的是这个 ID 吗？",

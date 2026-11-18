@@ -76,7 +76,8 @@ PCs already added through the relay keep working. Clients that support pairing l
 beside its QR code here (an older Ovis names it **Show a code to type**; its pairing link works too):
 this PC's server finds that PC through the relay as a phone does ([Pairing with a typed code](relay.md)),
 keeps what it found, and shows that PC's ID. Choose **It matches** only if every group matches the ID
-at the top of **My devices** on that PC's screen (under the code on an older Ovis). This PC's server then pairs with that one exactly as a phone does: the same one-time code, the same
+under the code on that PC's screen. An older Ovis shows no ID in **Connect**: there, take the code from
+**Settings → Agents → Setup guide**, step **Phone and alerts**, which shows the PC's ID under it. This PC's server then pairs with that one exactly as a phone does: the same one-time code, the same
 end-to-end encryption and the same device key, kept on this server in
 `<stateDir>/relay-pcs/<pc id>.json` (mode `0600`). The other PC lists it under Devices as
 `Ovis on <this PC's name>`, with the access any paired device has. The PC itself is saved in
