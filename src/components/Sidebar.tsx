@@ -1,6 +1,6 @@
 import { tally, usageCounters } from "../lib/usageCounters.ts";
 import { Fragment, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type AnimationEvent, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
-import { Bot, ChevronDown, ChevronRight, Ellipsis, Folder, FolderOpen, GitBranch, History, Layers, ListChecks, Pencil, Pin, PinOff, Plus, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
+import { Bot, ChevronDown, ChevronRight, Ellipsis, FolderOpen, GitBranch, History, Layers, ListChecks, Pencil, Pin, PinOff, Plus, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
 
 import "./Sidebar.css";
 
@@ -14,7 +14,6 @@ import { usePaneLocked } from "../lib/paneLocks.ts";
 import type { AppActions } from "../lib/actions.ts";
 import { indicatorGlyph, knownStatus, rollupStatus, STATUS_WORD } from "../lib/status.ts";
 import { AgentMark } from "./AgentMark.tsx";
-import { WorkspaceFavicon } from "./WorkspaceFavicon.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
 import { WorktreeDialog, type WorktreeDialogMode } from "./WorktreeDialog.tsx";
@@ -34,6 +33,8 @@ import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
 import { useWorktreeBranches } from "../lib/useWorktreeBranches.ts";
 import { useSessionHistoryOffered } from "../lib/useSessionHistoryOffered.ts";
 import { useRepositoryWorkspaces } from "../lib/repositoryWorkspaces.ts";
+import { useSpaceFolders } from "../lib/useSpaceFolders.ts";
+import { folderOf, spaceColor } from "../../shared/space-folders.ts";
 import { watchTouchReorder } from "../lib/touchReorder.ts";
 import { isBackgroundWorkspace, placeBlock, splitBackgroundGroups, workspaceMoves, worktreeGroups as groupWorktrees } from "../lib/workspaceOrder.ts";
 import { worktreeLabel } from "../lib/worktreeName.ts";
@@ -285,6 +286,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
     setBackgroundCollapsed(!backgroundCollapsed);
     try { localStorage.setItem(backgroundFoldKey(machineId), backgroundCollapsed ? "0" : "1"); } catch { /* storage denied: this page keeps it */ }
   };
+  const spaceFolders = useSpaceFolders(machineId, online);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   // a workspace holding a locked pinned agent (lib/paneLocks.ts) is closed or deleted from no menu here
@@ -400,6 +402,17 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
     || (online && rollupStatus(roster.filter((pane) => pane.workspace_id === member.workspace_id).map((pane) => activity.status(machineId, pane))) === "blocked"));
   const drawnGroup = (group: WorkspaceGroup<WorkspaceInfo>): boolean => roster.some((pane) => pane.workspace_id === group.workspace.workspace_id);
   const worktreeIds = new Set(worktreeGroups.flatMap((group) => group.children.map((child) => child.workspace_id)));
+  // the folder a workspace works in, as herdr-app places it: its first pane's folder
+  const placeOf = useMemo(() => {
+    const places = new Map<string, string>();
+    for (const pane of snapshot?.panes ?? []) if (pane.cwd && !places.has(pane.workspace_id)) places.set(pane.workspace_id, pane.cwd);
+    return places;
+  }, [snapshot?.panes]);
+  const folderNames = useMemo(() => new Map(spaceFolders.list.map((folder) => [folder.id, folder.name])), [spaceFolders]);
+  const folderNameOf = (workspaceId: string): string | null => {
+    const id = folderOf(workspaceId, spaceFolders, placeOf.get(workspaceId) ?? null);
+    return id === null ? null : folderNames.get(id) ?? null;
+  };
   type Parts = { people: WorkspaceGroup<WorkspaceInfo>[]; background: WorkspaceGroup<WorkspaceInfo>[]; shown: WorkspaceGroup<WorkspaceInfo>[] };
   const parts = (groups: WorkspaceGroup<WorkspaceInfo>[]): Parts => {
     if (!backgroundApart) return { people: groups, background: [], shown: [] };
@@ -772,9 +785,13 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
     // hash, and a branch other than the default one dim at its end, unless it only repeats the name
     const compact = !twoLine;
     // only a worktree herdr opened has a name it made: a name the user chose is drawn whole
-    const shownTitle = compact && linked ? compactWorktreeName(rowTitle) : rowTitle;
+    const spaceFolder = nested ? null : folderNameOf(workspace.workspace_id);
+    const inFolder = (name: string): string => spaceFolder === null ? name : `${spaceFolder} / ${name}`;
+    const shownName = inFolder(rowTitle);
+    const compactTitle = compact && linked ? compactWorktreeName(rowTitle) : rowTitle;
+    const shownTitle = inFolder(compactTitle);
     const tailBranch = compact ? compactBranch(branchTitle) : null;
-    const branchTail = tailBranch !== null && branchTitle !== null && !sameName(branchTitle, rowTitle) && tailBranch !== worktreeLabel(shownTitle) ? tailBranch : null;
+    const branchTail = tailBranch !== null && branchTitle !== null && !sameName(branchTitle, rowTitle) && tailBranch !== worktreeLabel(compactTitle) ? tailBranch : null;
     const branchNote = branchTitle && branchTitle !== workspace.label ? branchTitle : null;
     const paths = [...new Set([workspace.worktree?.checkout_path, pane.cwd].filter((path): path is string => Boolean(path)))];
     const context = filtered !== null && !filtered.matchedWorkspaces.has(workspace.workspace_id);
@@ -804,9 +821,8 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
     const filterNote = context && selected ? <span className="sidebar-filter-note">{t("Selected")}</span> : null;
     const menuOpen = menu?.workspace.workspace_id === workspace.workspace_id;
     const contentsId = `${rosterId}-worktrees-${encodeURIComponent(workspace.workspace_id)}`;
-    const unfolded = children.length > 0 && repoKey !== undefined && !collapsed;
-    const face = <WorkspaceFavicon root={workspace.worktree?.checkout_path ?? pane.cwd ?? null} fallback={<span className="sidebar-mark workspace-folder" aria-hidden="true">{unfolded ? <FolderOpen /> : <Folder />}</span>} />;
-    const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null): void => setMenu(menuOpen ? null : { anchor, point, previousFocus, workspace, title: rowTitle, place: [branchNote, ...paths].filter(Boolean).join(" · ") || workspace.label });
+    const face = <span className="sidebar-mark workspace-avatar" aria-hidden="true"><span className="workspace-avatar-tile" style={{ backgroundColor: spaceColor(spaceFolders.colors[workspace.workspace_id]) }}>{[...workspace.label][0]?.toUpperCase() ?? "?"}</span></span>;
+    const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null): void => setMenu(menuOpen ? null : { anchor, point, previousFocus, workspace, title: shownName, place: [branchNote, ...paths].filter(Boolean).join(" · ") || workspace.label });
     return <li
       className={`workspace workspace-group pane-item${selected ? " is-selected" : ""}${workerSelected ? " has-selected-agent" : ""}${collapsed ? " is-collapsed" : ""}${context ? " is-filter-context" : ""}${dragWorkspaceId === workspace.workspace_id ? " is-dragging" : ""}${touchDrag?.source === workspace.workspace_id ? " is-lifted" : ""}`}
       key={workspace.workspace_id}
@@ -819,8 +835,8 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
       <div className="workspace-header"
         onMouseDownCapture={(event) => { if ((event.button === 2 || (event.button === 0 && event.ctrlKey)) && !(event.target as HTMLElement).closest("input")) event.preventDefault(); }}
         onContextMenu={(event) => onRowContextMenu(event, toggleMenu)}>
-        {/* a workspace leads with its own face, the project's icon or else a folder; when linked
-            worktrees sit under it, that face is also the fold, and turns to an open or closed folder under a pointer */}
+        {/* a workspace leads with herdr-app's avatar, its first letter on its color; when linked worktrees
+            sit under it, that avatar is also the fold, and turns to an arrow under a pointer */}
         {nested ? null : children.length > 0 && repoKey !== undefined ? <button
           type="button"
           className="sidebar-row-action workspace-toggle"
@@ -829,7 +845,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
           aria-expanded={!collapsed}
           aria-controls={contentsId}
           onClick={() => toggleWorktrees(repoKey, collapsed)}
-        >{face}<span className="workspace-toggle-fold" aria-hidden="true">{collapsed ? <Folder /> : <FolderOpen />}</span></button> : face}
+        >{face}<span className="workspace-toggle-fold" aria-hidden="true">{collapsed ? <ChevronRight /> : <ChevronDown />}</span></button> : face}
         <div
           className="pane-select workspace-select"
           role="button"
@@ -842,7 +858,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
           data-pane={pane.pane_id}
           aria-current={selected ? "true" : undefined}
           aria-expanded={foldable ? !rowFolded : undefined}
-          title={[`${pane.pane_id} — ${rowTitle}`, branchNote, ...paths, paneTitle(pane), agentsTitle(workspace)].filter(Boolean).join(" — ")}
+          title={[`${pane.pane_id} — ${shownName}`, branchNote, ...paths, paneTitle(pane), agentsTitle(workspace)].filter(Boolean).join(" — ")}
           onPointerDown={(event) => { if (event.button === 0 && !event.ctrlKey && !selected && pane.agent != null) pressPane?.(machineId, pane.pane_id); }}
           onClick={() => { if (foldable) toggleFold(); else actions.selectPane(pane.pane_id); }}
           onKeyDown={(event) => {
@@ -877,7 +893,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
             }}
           /> : place !== null ? <span className="workspace-copy is-two-line">
             <span className="workspace-line">
-              <span className="workspace-name">{rowTitle}</span>
+              <span className="workspace-name">{shownName}</span>
               {foldedCount > 0 && <span className="workspace-fold-count" aria-hidden="true">+{foldedCount}</span>}
               {filterNote}
             </span>
@@ -895,14 +911,14 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
           </span>
         </div>
         <div className="workspace-actions">
-          <button type="button" className="sidebar-row-action row-menu-toggle" aria-label={t("More for {title}", { title: rowTitle })} aria-haspopup={sheet ? "dialog" : "menu"} aria-expanded={menuOpen} onClick={(event) => toggleMenu(event.currentTarget)}>
+          <button type="button" className="sidebar-row-action row-menu-toggle" aria-label={t("More for {title}", { title: shownName })} aria-haspopup={sheet ? "dialog" : "menu"} aria-expanded={menuOpen} onClick={(event) => toggleMenu(event.currentTarget)}>
             <Ellipsis aria-hidden="true" />
           </button>
         </div>
       </div>
       {inlineError?.workspaceId === workspace.workspace_id && <p className="sidebar-inline-error" role="alert">{inlineError.message}{inlineError.detail !== null && <><br /><code>{inlineError.detail}</code></>}</p>}
       {/* the worktrees drawn under it go on from the same branch: the last agent is a tee, not an elbow */}
-      {workers.length > 0 && <ul className="workspace-agents" aria-label={t("Agents in {name}", { name: rowTitle })} data-more={children.some((child) => !collapsed || roster.some((candidate) => candidate.workspace_id === child.workspace_id && candidate.pane_id === selectedPaneId)) ? "" : undefined}>{workers.map(renderAgentRow)}</ul>}
+      {workers.length > 0 && <ul className="workspace-agents" aria-label={t("Agents in {name}", { name: shownName })} data-more={children.some((child) => !collapsed || roster.some((candidate) => candidate.workspace_id === child.workspace_id && candidate.pane_id === selectedPaneId)) ? "" : undefined}>{workers.map(renderAgentRow)}</ul>}
     </li>;
   };
 

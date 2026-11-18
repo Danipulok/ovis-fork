@@ -82,6 +82,9 @@
      theme, so it is named here and never overridden by the theme blocks below
      (FileViewer's .file-viewer-pdf) */
   --pdf-page: #ffffff;
+  /* herdr-app's space avatars are white letters on the space's own color in either theme
+     (Sidebar.css .workspace-avatar-tile) */
+  --avatar-ink: #ffffff;
 
   /* terminal theme: copied into src/lib/themes.generated.ts by `bun run generate:themes` for xterm */
   --term-bg: #181613;

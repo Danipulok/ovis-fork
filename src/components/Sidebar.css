@@ -60,12 +60,19 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   height: var(--icon-size);
 }
 
-.workspace-favicon img {
-  display: block;
-  width: var(--icon-size);
-  height: var(--icon-size);
-  object-fit: contain;
-  border-radius: var(--radius-sm);
+/* herdr-app's space avatar: an 18px tile in the workspace's color, its first letter in white
+   https://github.com/Danipulok/herdr-mods/blob/87daa79826fe94fc7cdfa2fd091101d7f2254c67/mods/folders/main.js#L1124 */
+.workspace-avatar-tile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  color: var(--avatar-ink);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .sidebar-mark .agent-mark {

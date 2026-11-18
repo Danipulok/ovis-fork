@@ -1174,6 +1174,7 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   // Connection breadcrumbs stay inside the fictional demo; never send them to a real endpoint.
   if (path === "/api/connection-diagnostics") return new Response(null, { status: 204 });
   if (path === "/api/seen") return method === "POST" ? new Response(null, { status: 204 }) : json({ finishes: [] }, 200, { "cache-control": "no-store" });
+  if (path === "/api/space-folders") return json({ list: [], of: {} }, 200, { "cache-control": "no-store" });
   if (path === "/api/preferences") {
     if (method === "GET") return json(preferences, 200, { "cache-control": "no-store" });
     if (method !== "PUT") return error("method_not_allowed", "Use GET or PUT /api/preferences", 405);
