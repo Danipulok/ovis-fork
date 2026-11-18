@@ -192,6 +192,10 @@ export function createServer(
     localFiles?: boolean;
     herdrProfiles?: () => Promise<HerdrMachineProfile[]>;
     herdrConfigPath?: string;
+    /** herdr-app's sidebar folders file (server/space-folders.ts); `~/.config/herdr-space-folders.json` when unset */
+    spaceFoldersPath?: string;
+    /** herdr-app's shared state, whose `space.colors` paints the workspaces' avatars; `~/.config/herdr-app/shared.json` when unset */
+    spaceColorsPath?: string;
     registerBridge?: boolean;
     /** the token a connection server presents as this PC's bridge; random unless a test names it */
     bridgeToken?: string;

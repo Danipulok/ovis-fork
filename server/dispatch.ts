@@ -14,6 +14,7 @@ import { bindScope, cameThroughProxy, decideAccess, decideMachineAccess, forward
 import { type DeviceStore, handleDeviceRequest, newStreamKey, sameBrowser, streamCookie, streamKeys, type DeviceMatch } from "./devices.ts";
 import { handlePreferencesRequest, type PreferenceStore } from "./preferences.ts";
 import { handleSeenRequest, type SeenStore } from "./seen.ts";
+import { handleSpaceFoldersRequest, spaceColorsPath, spaceFoldersPath } from "./space-folders.ts";
 import { remoteAccess } from "./tailscale.ts";
 import { badRequest, errorResponse, jsonResponse, setRequestRoute, wordedHeaders, wordHerdrFailures } from "./http.ts";
 import { requestOrigin, serveStatic } from "./static.ts";
@@ -560,6 +561,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   if (pathname === "/api/preferences") { setRequestRoute(pathname); return handlePreferencesRequest(request, preferences); }
   // the finishes read in some browser of this server; a watching device reads them and cannot add to them (above)
   if (pathname === "/api/seen") { setRequestRoute(pathname); return handleSeenRequest(request, seen); }
+  if (pathname === "/api/space-folders" || pathname.startsWith("/api/space-folders/")) { setRequestRoute(pathname); return handleSpaceFoldersRequest(request, pathname, options.localFiles === false ? null : { folders: options.spaceFoldersPath ?? spaceFoldersPath(), colors: options.spaceColorsPath ?? spaceColorsPath() }); }
 
   if (pathname === "/api/system") { setRequestRoute(pathname); return handleSystemRequest(request, ctx.services.systemSampler); }
   if (pathname === USER_FONTS_PATH || pathname.startsWith(`${USER_FONTS_PATH}/`)) return handleUserFontsRequest(request, pathname, ctx.services.fontsDir, url.search);

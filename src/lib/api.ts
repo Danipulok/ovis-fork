@@ -3,6 +3,7 @@ import { CompactAgentsError, expandMachine, type WireMachine } from "../../share
 import type { PreferencesChange, SharedPreferences } from "../../shared/preferences.ts";
 import type { AlertWebhookSave, AlertWebhookView } from "../../shared/alert-webhook.ts";
 import type { SeenFinish, SeenPresentation } from "../../shared/seen.ts";
+import { spaceFoldersOf, type SpaceFolders } from "../../shared/space-folders.ts";
 import type { AgentCatalogResponse, AgentTabStarted } from "../../shared/agent-catalog.ts";
 import type { ConversationSearchResponse } from "../../shared/conversation-search.ts";
 import { resumeConnectionTraces } from "./connectionTrace.ts";
@@ -62,7 +63,6 @@ import type {
   PaneFindRequest,
   PaneFindResponse,
   PlanStep,
-  ProjectFavicon,
   PromptAnswer,
   PushKey,
   PortalAuth,
@@ -380,6 +380,11 @@ export async function shareSeen(finish: SeenFinish, presented?: SeenPresentation
     body: JSON.stringify(presented === undefined ? finish : { ...finish, presented }) });
   if (response.ok || response.status === 404 || response.status === 403) return;
   throw await errorFrom(url, response);
+}
+
+export async function fetchSpaceFolders(signal?: AbortSignal): Promise<SpaceFolders> {
+  try { return spaceFoldersOf(await getJson<unknown>("/api/space-folders", { cache: "no-store", ...(signal ? { signal } : {}) })); }
+  catch (error) { if (error instanceof ApiError && error.status === 404) return spaceFoldersOf(null); throw error; }
 }
 
 const telemetryStatusListeners = new Set<(status: TelemetryStatus | null) => void>();
@@ -1097,10 +1102,6 @@ export async function fetchEditableText(path: string, paneId: string, machineId 
 
 export async function saveEditableText(request: TextSaveRequest, machineId = "local"): Promise<TextSaved> {
   return (await (await sendJson(machinePath(machineId, "fs/text"), "PUT", request)).json()) as TextSaved;
-}
-
-export async function fetchProjectFavicon(root: string, machineId = "local"): Promise<FileInfo | null> {
-  return (await getJson<ProjectFavicon>(projectFaviconUrl(root, machineId))).icon;
 }
 
 export function projectFaviconUrl(root: string, machineId = "local"): string {

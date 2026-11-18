@@ -61,6 +61,7 @@ const DESIGN_ROWS: readonly (readonly [label: string, token: string])[] = [
   ["Popover shadow", "--shadow-pop"],
   ["Card shadow", "--shadow-card"],
   ["Document surface", "--pdf-page"],
+  ["Space avatar letter", "--avatar-ink"],
   ["Terminal/background", "--term-bg"],
   ["Terminal/foreground", "--term-fg"],
   ["Terminal/cursor", "--term-cursor"],

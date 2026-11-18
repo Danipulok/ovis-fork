@@ -99,6 +99,7 @@ Only tokens overridden by `[data-theme="light"]` have a light value. Both column
 | Popover shadow | `--shadow-pop` | `0 16px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--border)` | `0 16px 48px rgba(40, 32, 22, 0.16), 0 0 0 1px var(--border)` |
 | Card shadow | `--shadow-card` | `0 4px 16px rgba(0, 0, 0, 0.35)` | `0 4px 16px rgba(40, 32, 22, 0.07)` |
 | Document surface | `--pdf-page` | `#ffffff` | `#ffffff` |
+| Space avatar letter | `--avatar-ink` | `#ffffff` | `#ffffff` |
 | Terminal/background | `--term-bg` | `#181613` | `#faf8f3` |
 | Terminal/foreground | `--term-fg` | `#d8d0c3` | `#2a251f` |
 | Terminal/cursor | `--term-cursor` | `#f0a830` | `#8c5000` |
@@ -180,9 +181,10 @@ More button's waiting count): the panel's paper, which every palette's `--status
 6:1 or more (the contrast test floors the status colours at 3:1 on the panel the other way round,
 and the ratio is symmetric).
 
-`--pdf-page` is the one color with the same value in both columns, on purpose: a PDF page is
-paper, not UI, and the viewer (`.file-viewer-pdf`) must not tint it for the theme. It is named in
-`src/styles.css` under the same note and no theme or palette block overrides it.
+`--pdf-page` and `--avatar-ink` are the two colors with the same value in both columns, on purpose: a PDF page is
+paper, not UI, and the viewer (`.file-viewer-pdf`) must not tint it for the theme; a space avatar is
+herdr-app's white letter on the space's own color, which no theme changes. Both are named in
+`src/styles.css` under a note and no theme or palette block overrides them.
 
 ### Themes
 
@@ -1952,6 +1954,10 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   agent is blocked; a pinned one stays in the pinned card; under the filter the part opens. Alt+arrows
   and drags move a row only among the rows of its own part, and not while it is folded. An untagged workspace stays where it is.
   It follows the Codex app's bottom box for background work, as the Agents list does (#770).
+- A top-level workspace that this PC's herdr-app folders (shared/space-folders.ts) place in a folder is
+  named `<folder> / <workspace>` (`client / tasks`) wherever its row names it: the one-line name, the
+  two-line row's line that says the workspace, its tooltip and its menu. The list draws no folder
+  headings and keeps herdr's order; a worktree under its repository keeps its own name.
 - Settings > Appearance > **Fold helpers under their agent** (the device setting `foldHelpers`,
   off by default, #772) puts one line under each agent row that has helpers in the same list
   (`.agent-helpers`): it hangs from the agent as a helper does, a helper's height, with a caret
