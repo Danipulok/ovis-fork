@@ -4690,8 +4690,9 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
 - A phone photo is drawn to a JPEG of at most 2048 pixels a side in the browser before it uploads,
   about 1 MB, so it crosses the relay at once and fast; the agents read little more than that.
   An iPhone's HEIC or HEIF photo always is, since the agents read PNG, JPEG, GIF and WebP only; a
-  JPEG one only when that makes it smaller, and a PNG screenshot never. One the browser cannot
-  decode uploads as it is (`uploadableImage`, `lib/composerImageMime.ts`).
+  JPEG one always too, since the redraw drops its camera metadata (location, device, date); a PNG
+  screenshot never. One the browser cannot decode uploads as it is (`uploadableImage`,
+  `lib/composerImageMime.ts`).
 - While a phone's keyboard is up, a tap on the transcript or a drag down it (`32px`) puts the
   keyboard away. Each only blurs the field, so the draft stays. The prompt card, which can stand
   where the transcript was on a short screen, does the same: a tap on its text (never on an

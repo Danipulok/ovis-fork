@@ -60,13 +60,13 @@ describe("uploadableImage", () => {
     expect(await uploadableImage(photo, async () => { throw new Error("EncodingError"); })).toBe(photo);
   });
 
-  test("sends a JPEG photo smaller, and keeps one the JPEG would not shrink", async () => {
+  test("sends every JPEG photo redrawn, which drops its camera metadata, even when that is no smaller", async () => {
     const photo = new File(["x".repeat(4096)], "IMG_3718.jpeg", { type: "image/jpeg", lastModified: 7 });
     const smaller = await uploadableImage(photo, jpeg);
     expect([smaller.name, smaller.type, smaller.lastModified, await smaller.text()]).toEqual(["IMG_3718.jpg", "image/jpeg", 7, "jpeg bytes"]);
 
     const small = new File(["tiny"], "IMG_3719.jpg", { type: "image/jpeg" });
-    expect(await uploadableImage(small, jpeg)).toBe(small);
+    expect(await (await uploadableImage(small, jpeg)).text()).toBe("jpeg bytes");
     expect(await uploadableImage(photo, async () => null)).toBe(photo);
   });
 

@@ -56,8 +56,8 @@ async function canvasJpeg(image: Blob): Promise<Blob | null> {
 /**
  * A phone photo as a JPEG of at most `MAX_PHOTO_SIDE` a side: an iPhone's HEIC or HEIF one always,
  * since the agents read only PNG, JPEG, GIF and WebP
- * (https://platform.claude.com/docs/en/build-with-claude/vision), a JPEG one when that makes it
- * smaller. Any other file (a screenshot's PNG), or one this browser cannot decode, as it is.
+ * (https://platform.claude.com/docs/en/build-with-claude/vision), a JPEG one too, which drops its
+ * camera metadata. Any other file (a screenshot's PNG), or one this browser cannot decode, as it is.
  */
 export async function uploadableImage<T extends Blob>(file: T, toJpeg: (image: Blob) => Promise<Blob | null> = canvasJpeg): Promise<T | File> {
   const name = file instanceof File ? file.name : "";
@@ -65,7 +65,7 @@ export async function uploadableImage<T extends Blob>(file: T, toJpeg: (image: B
   if (!heic && file.type.toLowerCase() !== "image/jpeg") return file;
 
   const jpeg = await toJpeg(file).catch(() => null);
-  if (jpeg === null || (!heic && jpeg.size >= file.size)) return file;
+  if (jpeg === null) return file;
 
   const base = HEIC_NAME.test(name) ? name.replace(HEIC_NAME, "") : name.replace(/\.(jpe?g)$/i, "") || "photo";
   return new File([jpeg], `${base}.jpg`, { type: "image/jpeg", lastModified: file instanceof File ? file.lastModified : Date.now() });
