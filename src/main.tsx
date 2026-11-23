@@ -22,8 +22,10 @@ import { shellMode } from "./lib/shellMode.ts";
 import { isReportableWindowError } from "./lib/uncaughtErrors.ts";
 import "./lib/viewport.ts";
 import { watchSheetExits } from "./lib/sheets.ts";
+import { watchSafariLinks } from "./lib/safariLinks.ts";
 
 watchSheetExits();
+watchSafariLinks();
 
 const container = document.getElementById("root");
 if (!container) throw new Error("#root is missing from index.html");

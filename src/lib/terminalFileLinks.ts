@@ -2,6 +2,7 @@ import type { IBuffer, ILink, ILinkDecorations, ILinkProvider } from "@xterm/xte
 import { fileUriPath } from "../../shared/fileUri.ts";
 import { isCodeName } from "./filePaths.ts";
 import { inMacApp, inNativeApp } from "./nativeApp.ts";
+import { safariAddress } from "./safariLinks.ts";
 
 /**
  * Whether this page can keep a browser tab to reuse. The iOS, Android, Mac and desktop apps hand an
@@ -47,6 +48,12 @@ export function createWebLinkOpener(): (uri: string, reuse: boolean) => void {
     link.click();
   };
   return (uri, reuse) => {
+    const address = safariAddress(uri);
+    if (address !== uri) {
+      newTab(address);
+      return;
+    }
+
     if (!reuse || !canReuseExternalLinkTab()) {
       newTab(uri);
       return;

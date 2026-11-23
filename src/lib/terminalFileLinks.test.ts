@@ -60,6 +60,29 @@ describe("openWebLink", () => {
       else Reflect.deleteProperty(globalThis, "window");
     }
   });
+
+  it("hands a terminal or chat link to Safari in the iPhone Home Screen app, even with tab reuse on", () => {
+    const clicked: string[] = [];
+    const opened: string[] = [];
+    const saved = ["document", "window", "navigator", "location"].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
+    const values: Record<string, unknown> = {
+      document: { createElement: () => { const link = { href: "", target: "", rel: "", click: () => clicked.push(link.href) }; return link; } },
+      window: { open: (uri: string) => { opened.push(uri); return null; } },
+      navigator: { userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 26_1 like Mac OS X)", maxTouchPoints: 5, standalone: true },
+      location: { origin: "https://ovis.example.com" },
+    };
+    for (const [key] of saved) Object.defineProperty(globalThis, key, { configurable: true, value: values[key] });
+    try {
+      createWebLinkOpener()("https://gitlab.com/issues/7", true);
+      createWebLinkOpener()("https://ovis.example.com/x", false);
+    } finally {
+      for (const [key, descriptor] of saved) {
+        if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+        else Reflect.deleteProperty(globalThis, key);
+      }
+    }
+    expect({ clicked, opened }).toEqual({ clicked: ["x-safari-https://gitlab.com/issues/7", "https://ovis.example.com/x"], opened: [] });
+  });
 });
 
 const click = { button: 0 } as MouseEvent;
