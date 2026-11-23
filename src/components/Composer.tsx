@@ -71,7 +71,7 @@ import { BackgroundTasks } from "./BackgroundTasks.tsx";
 import { MicButton, VoiceRecordingPill, useDictation } from "./VoiceInput.tsx";
 import { usePaneCommands } from "../lib/usePaneCommands.ts";
 import { useT } from "../lib/i18n.ts";
-import { offersRetry, userFailure, type UserFailure } from "../lib/userError.ts";
+import { failureReason, offersRetry, userFailure, type UserFailure } from "../lib/userError.ts";
 import { AttachmentTooLargeError } from "../lib/api.ts";
 import { modalOpen } from "../lib/focus.ts";
 
@@ -1067,8 +1067,9 @@ export function Composer({
     : hint === "no-room" ? t("{max}-character limit · {count} over", { max: formatChars(MAX_COMPOSER_CHARS), count: formatChars(roomless?.missing ?? 0) })
     : hint === "near-limit" ? composerFull(text.length, MAX_COMPOSER_CHARS) ? t("{max}-character limit", { max: formatChars(MAX_COMPOSER_CHARS) }) : t("{count} characters left", { count: MAX_COMPOSER_CHARS - text.length })
     : hint === "uploading" ? t("Uploading file…") : offlineSentence;
+  const failedReason = note !== null && typeof note === "object" && "failure" in note ? failureReason(note.failure) : null;
   const noteLine = note === null ? null : typeof note === "string" ? note : "failure" in note
-    ? [note.failure.cause === null ? t("{name} could not be attached", { name: note.attachment.file.name }) : t("{name} could not be attached: {reason}", { name: note.attachment.file.name, reason: note.failure.cause }), note.attachment.leftOut].filter((part) => part !== null).join(" ")
+    ? [failedReason === null ? t("{name} could not be attached", { name: note.attachment.file.name }) : t("{name} could not be attached: {reason}", { name: note.attachment.file.name, reason: failedReason }), note.attachment.leftOut].filter((part) => part !== null).join(" ")
     : note.note;
   const strip = mobile ? null : composerStrip({ cwd, branch, repo: worktreeRepo });
   const worktree = worktreeRepo !== null;
@@ -1148,10 +1149,10 @@ export function Composer({
           <TriangleAlert className="composer-note-icon" aria-hidden="true" />
           <div className="composer-note-text">
             {noteLine}
-            {typeof note === "object" && "failure" in note && (note.failure.advice !== null || note.failure.detail !== null) && <details className="composer-note-details">
+            {typeof note === "object" && "failure" in note && (note.failure.advice !== null || (note.failure.cause !== null && note.failure.detail !== null)) && <details className="composer-note-details">
               <summary>{t("Details")}</summary>
               {note.failure.advice !== null && <p>{note.failure.advice}</p>}
-              {note.failure.detail !== null && <code>{note.failure.detail}</code>}
+              {note.failure.cause !== null && note.failure.detail !== null && <code>{note.failure.detail}</code>}
             </details>}
           </div>
           {/* the draft named above, never what has replaced it since: the server checks; a box it could

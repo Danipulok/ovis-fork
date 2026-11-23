@@ -4646,11 +4646,13 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   text they sit in, so typing while files upload is not disturbed.
 - An upload that failed is one note on the box's top edge (`.composer-note`, `role="alert"`): what
   failed and the cause when it is known (`Couldn't attach · PC disk is full`, from the status or the
-  server's own words, `lib/userError.ts` `userFailure`); with no known cause the line is
-  `Couldn't attach` and Try again beside it uploads the file again (`offersRetry`: no cause, or the
-  PC was only slow). The advice and the server's words fold behind a dim Details toggle under the
-  line, never on it; the size limit's own sentence is the whole note. Removing the tile removes its
-  note.
+  server's own words, `lib/userError.ts` `userFailure`); with no known cause the line names the
+  server's own words instead (`Couldn't attach · file is empty`, `failureReason`), or the HTTP
+  status of an answer that had none, so a failure is never told by Try again alone, and Try again
+  beside it uploads the file again (`offersRetry`: no cause, or the PC was only slow). The advice,
+  and the server's words when a cause already stands on the line, fold behind a dim Details toggle
+  under the line, never on it; the size limit's own sentence is the whole note. Removing the tile
+  removes its note.
 - An iPhone's HEIC or HEIF photo is drawn to a JPEG in the browser before it uploads (at most 4096
   pixels a side), since the agents read PNG, JPEG, GIF and WebP only; one the browser cannot decode
   uploads as it is (`uploadableImage`, `lib/composerImageMime.ts`).
