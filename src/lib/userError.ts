@@ -210,3 +210,14 @@ export function userFailure(cause: unknown): UserFailure {
 export function offersRetry(failure: UserFailure): boolean {
   return failure.cause === null || failure.kind === "slow";
 }
+
+/** A failed upload: as `userFailure`, but an answer with no words and no known cause names its HTTP status. */
+export function uploadFailure(cause: unknown): UserFailure {
+  const failure = userFailure(cause);
+  return failure.cause === null && failure.detail === null && cause instanceof ApiError ? { ...failure, detail: `HTTP ${cause.status}` } : failure;
+}
+
+/** What a one-line failure says after its subject: the plain cause, or else the error's own words, so the line never ends bare. */
+export function failureReason(failure: UserFailure): string | null {
+  return failure.cause ?? failure.detail;
+}
