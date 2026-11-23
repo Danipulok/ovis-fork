@@ -3,7 +3,7 @@ import { ApiError, fetchSession } from "./api.ts";
 import { withChatReadDeadline } from "./chatReadDeadline.ts";
 import { setCurrentLanguage, translate } from "./i18n.ts";
 import { RemoteResponseInvalid, RemoteResponseTooLarge } from "../../server/remote-json.ts";
-import { machineErrorText, saysHerdrAway, userErrorMessage, userFailure } from "./userError.ts";
+import { failureReason, machineErrorText, saysHerdrAway, userErrorMessage, userFailure } from "./userError.ts";
 
 const api = (status: number, detail = "herdr said no") => new ApiError("/api/x", status, detail, null);
 
@@ -162,9 +162,22 @@ describe("userFailure", () => {
     expect(userFailure(new Error("  ")).detail).toBeNull();
   });
 
+  it("names the HTTP status of an answer that came with no words", () => {
+    expect(userFailure(api(400, "")).detail).toBe("HTTP 400");
+  });
+
   it("answers in the UI language", () => {
     setCurrentLanguage("ko");
     expect(userFailure(api(500, "disk full")).cause).toBe(translate("ko", "PC disk is full"));
     expect(userFailure(api(500, "disk full")).cause).not.toBe("PC disk is full");
+  });
+});
+
+describe("failureReason", () => {
+  it("says the plain cause, or else the PC's own words, so a failed upload's line never ends bare", () => {
+    expect(failureReason(userFailure(api(404)))).toBe("It no longer exists on the PC");
+    expect(failureReason(userFailure(api(400, "file is empty")))).toBe("file is empty");
+    expect(failureReason(userFailure(api(400, "")))).toBe("HTTP 400");
+    expect(failureReason(userFailure(new Error(" ")))).toBeNull();
   });
 });

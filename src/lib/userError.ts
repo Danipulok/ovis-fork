@@ -44,7 +44,7 @@ function kindOf(cause: unknown): FailureKind {
 }
 
 function ownWords(cause: unknown): string {
-  return cause instanceof ApiError ? cause.detail : cause instanceof Error ? cause.message : String(cause);
+  return cause instanceof ApiError ? cause.detail.trim() || `HTTP ${cause.status}` : cause instanceof Error ? cause.message : String(cause);
 }
 
 const SENTENCE: Record<FailureKind, () => string> = {
@@ -139,4 +139,9 @@ export function userFailure(cause: unknown): UserFailure {
 
 export function offersRetry(failure: UserFailure): boolean {
   return failure.cause === null || failure.kind === "slow";
+}
+
+/** What a one-line failure says after its subject: the plain cause, or else the PC's own words, so the line never ends bare. */
+export function failureReason(failure: UserFailure): string | null {
+  return failure.cause ?? failure.detail;
 }
