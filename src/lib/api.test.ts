@@ -120,6 +120,41 @@ it("refuses a 40 MiB file in the browser with the 32 MB limit named, before uplo
   expect(MAX_ATTACHMENT_BYTES).toBe(32 * 1024 * 1024);
 });
 
+it("uploads an iPhone's HEIC photo as the JPEG the browser drew, scaled to 4096 a side and never up", async () => {
+  const bodies: { content_type: string; name: string; data_base64: string }[] = [];
+  globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+    bodies.push(JSON.parse(String(init?.body)));
+    return Response.json({ ok: true, path: "/work/.ovis/paste-20261123-212127-ee17a8b2.jpg" });
+  }) as typeof fetch;
+  const drawn: number[][] = [], types: string[] = [], revoked: string[] = [];
+  const sizes: [number, number][] = [[8064, 6048], [4032, 3024]];
+  const saved = { Image: globalThis.Image, document: globalThis.document, createObjectURL: URL.createObjectURL, revokeObjectURL: URL.revokeObjectURL };
+  Object.assign(globalThis, {
+    // a browser's image has no size until it is decoded
+    Image: class { src = ""; naturalWidth = 0; naturalHeight = 0; async decode() { [this.naturalWidth, this.naturalHeight] = sizes.shift() ?? [0, 0]; } },
+    document: { createElement: () => ({
+      width: 0, height: 0,
+      getContext() { return { drawImage: (_image: unknown, ...box: number[]) => drawn.push(box) }; },
+      toBlob(resolve: (blob: Blob) => void, type: string) { types.push(type); resolve(new Blob(["jpeg"], { type: "image/jpeg" })); },
+    }) },
+  });
+  URL.createObjectURL = () => "blob:photo";
+  URL.revokeObjectURL = (url: string) => { revoked.push(url); };
+  try {
+    for (const name of ["IMG_0001.HEIC", "IMG_0002.HEIC"]) {
+      expect(await uploadPaneImage("p1", new File(["heic"], name, { type: "image/heic" }))).toBe("/work/.ovis/paste-20261123-212127-ee17a8b2.jpg");
+    }
+  } finally {
+    Object.assign(globalThis, { Image: saved.Image, document: saved.document });
+    URL.createObjectURL = saved.createObjectURL;
+    URL.revokeObjectURL = saved.revokeObjectURL;
+  }
+  expect(drawn).toEqual([[0, 0, 4096, 3072], [0, 0, 4032, 3024]]);
+  expect(types).toEqual(["image/jpeg", "image/jpeg"]);
+  expect(revoked).toEqual(["blob:photo", "blob:photo"]);
+  expect(bodies.map(({ content_type, name, data_base64 }) => [content_type, name, atob(data_base64)])).toEqual([["image/jpeg", "IMG_0001.jpg", "jpeg"], ["image/jpeg", "IMG_0002.jpg", "jpeg"]]);
+});
+
 it("posts the full safe telemetry snapshot and current notice version", async () => {
   const settings = telemetrySettingsSnapshot({
     ...DEFAULT_SETTINGS,
