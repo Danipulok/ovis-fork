@@ -11,6 +11,7 @@
 import { createElement, type AnchorHTMLAttributes, type MouseEvent, type ReactElement, type Ref } from "react";
 
 import { inMacApp, inNativeApp } from "./nativeApp.ts";
+import { safariAddress } from "./safariLinks.ts";
 
 export type ExternalLinkKind = "link" | "sign-in" | "ovis";
 
@@ -71,6 +72,12 @@ export function createWebLinkOpener(): (uri: string, reuse: boolean) => void {
     link.click();
   };
   return (uri, reuse) => {
+    const address = safariAddress(uri);
+    if (address !== uri) {
+      newTab(address);
+      return;
+    }
+
     if (!reuse || !canReuseExternalLinkTab()) {
       newTab(uri);
       return;
