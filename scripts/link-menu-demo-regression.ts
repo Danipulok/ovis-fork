@@ -59,17 +59,20 @@ const harness = `<script>(() => {
   };
 })();</script>`;
 
-interface Setup { android: boolean; share?: boolean; language?: string }
+const IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 26_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148";
+
+interface Setup { android: boolean; ios?: boolean; share?: boolean; language?: string }
 
 async function open(browser: Browser, origin: string, url: string, setup: Setup, ready = ".chat-turn-agent .markdown a"): Promise<{ context: BrowserContext; page: Page; errors: string[] }> {
-  const context = await browser.newContext({ viewport: { width: 390, height: 664 }, screen: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, locale: "en-US" });
+  const context = await browser.newContext({ viewport: { width: 390, height: 664 }, screen: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, locale: "en-US", ...(setup.ios ? { userAgent: IPHONE } : {}) });
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
   // the address a link opens: answered here, so nothing leaves the machine
   await context.route(/^https:\/\/(datatracker\.ietf\.org|github\.com)\//, (route) => route.fulfill({ status: 200, contentType: "text/html", body: "<title>opened</title>" }));
-  await context.addInitScript(([paneId, { android, share, language }]) => {
+  await context.addInitScript(([paneId, { android, ios, share, language }]) => {
     localStorage.setItem(`ovis:view:${paneId}`, "chat");
     if (language) localStorage.setItem("ovis:settings", JSON.stringify({ language }));
     if (android) (window as unknown as { Capacitor: unknown }).Capacitor = { isNativePlatform: () => true, getPlatform: () => "android" };
+    if (ios) Object.defineProperty(navigator, "standalone", { configurable: true, value: true });
     const shared: unknown[] = [];
     (window as unknown as { shared: unknown[] }).shared = shared;
     if (share) Object.defineProperty(navigator, "share", { configurable: true, value: (data: unknown) => { shared.push(data); return Promise.resolve(); } });
@@ -227,6 +230,58 @@ try {
           const menus = await page.evaluate(() => (window as unknown as { linkMenus: { prevented: boolean }[] }).linkMenus);
           assert.deepEqual(menus, [{ prevented: false, pointerType: "touch" }]);
           console.log("PASS browser: a long press on a link is left to the browser's own menu");
+          assert.deepEqual(errors, []);
+        } finally {
+          await context.close();
+        }
+      }
+
+      {
+        // iOS fires no contextmenu for a touch, so the press is a real touch held still, as Safari sends it
+        const { context, page, errors } = await open(browser, origin, url, { android: false, ios: true });
+        try {
+          const cdp = await context.newCDPSession(page);
+          const hold = async (selector: string, text: string, moves = 0): Promise<void> => {
+            const target = page.locator(selector, { hasText: text }).first();
+            await target.scrollIntoViewIfNeeded();
+            const box = (await target.boundingBox())!;
+            const x = Math.round(box.x + Math.min(box.width / 2, 20)), y = Math.round(box.y + box.height / 2);
+            await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
+            for (let step = 1; step <= moves; step += 1) await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: y + step * 20 }] });
+            // fixed wait: a long press is a touch held still past `LONG_PRESS_MS` (450)
+            await page.waitForTimeout(700);
+            await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+          };
+          const address = page.url();
+
+          // Chromium has no -webkit-touch-callout to read back; Safari does
+          assert.equal(await page.locator(link, { hasText: WORDS }).evaluate((node) => getComputedStyle(node).webkitUserSelect), "none", "a long press does not select a link's words");
+          assert.notEqual(await page.locator(words, { hasText: "plain words here" }).evaluate((node) => getComputedStyle(node).webkitUserSelect), "none", "other words stay selectable");
+
+          await hold(link, WORDS);
+          await page.locator(".row-sheet").waitFor();
+          assert.deepEqual(await sheetItems(page), ["Copy link", "Open link"], "a held touch on a link opens the link sheet");
+          assert.equal(await page.locator(".row-sheet-title").textContent(), WORDS);
+          await sheetAtRest(page);
+          if (evidence) await page.screenshot({ path: join(evidence, "link-menu-390-ios-home-screen.png") });
+          // the app hands Safari its address by clicking an anchor of its own (`createWebLinkOpener`)
+          await page.evaluate(() => { const opens: string[] = []; (window as unknown as { opens: string[] }).opens = opens; const click = HTMLAnchorElement.prototype.click; HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) { if (this.href.startsWith("x-safari-")) opens.push(this.href); else click.call(this); }; });
+          // Chromium sends no click after a held touch, so the one WebKit sends at the lift is sent here
+          await page.locator(link, { hasText: WORDS }).dispatchEvent("click");
+          assert.deepEqual(await page.evaluate(() => (window as unknown as { opens: string[] }).opens), [], "the lift opens no link under the sheet");
+          assert.equal(page.url(), address, "and leaves the app where it was");
+          await page.locator(".row-sheet-item", { hasText: "Copy link" }).tap();
+          await page.locator(".row-sheet").waitFor({ state: "detached" });
+          assert.equal(await page.evaluate(() => navigator.clipboard.readText()), HREF, "Copy link copies the address");
+          await page.locator(link, { hasText: WORDS }).dispatchEvent("click");
+          assert.deepEqual(await page.evaluate(() => (window as unknown as { opens: string[] }).opens), [`x-safari-${HREF}`], "a tap on the link still opens it, in Safari");
+          console.log("PASS ios home screen: a held touch on a link opens the link sheet, its lift opens nothing, and a tap still opens Safari");
+
+          await hold(words, "plain words here");
+          await hold(link, WORDS, 10);
+          assert.equal(await page.locator(".row-sheet").count(), 0, "a press on other words and a swipe from a link open no sheet");
+          assert.equal((await page.evaluate(() => (window as unknown as { opens: string[] }).opens)).length, 1, "nor open a link");
+          console.log("PASS ios home screen: other words and a swipe from a link open no sheet");
           assert.deepEqual(errors, []);
         } finally {
           await context.close();

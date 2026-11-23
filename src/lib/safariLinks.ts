@@ -25,7 +25,7 @@ function linkEnvironment(): LinkEnvironment {
   };
 }
 
-function inIosHomeScreenApp(env: LinkEnvironment): boolean {
+export function inIosHomeScreenApp(env: LinkEnvironment = linkEnvironment()): boolean {
   const ios = /iPhone|iPad|iPod/.test(env.userAgent) || (/Macintosh/.test(env.userAgent) && env.maxTouchPoints > 1);
   return ios && env.standalone === true && !inNativeApp();
 }

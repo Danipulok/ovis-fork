@@ -70,8 +70,8 @@ export interface TabStripProps {
   phoneRow?: boolean;
 }
 
-const LONG_PRESS_MS = 450;
-const LONG_PRESS_SLOP = 8;
+export const LONG_PRESS_MS = 450;
+export const LONG_PRESS_SLOP = 8;
 /** the click a lifted long press still sends is the press's, not a pick; a later one (a key, a mouse) is a pick again */
 const LONG_PRESS_CLICK_MS = 600;
 

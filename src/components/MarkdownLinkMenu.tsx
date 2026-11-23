@@ -1,18 +1,16 @@
 /**
- * A long press on a rendered Markdown link in the Android app. Its WebView draws no link menu of
- * its own (Chrome, Safari and the iOS app's WKWebView do, and keep theirs), so the app offers
- * Copy link, Open link and, where the WebView can share, Share link, in the phone's sheet
- * (RowMenu). Only the press the WebView itself reads as a long press, its `contextmenu`, opens
- * it: a tap still opens the link, a swipe over one still scrolls, and a press on other words still
- * selects them.
+ * A long press on a rendered Markdown link in the Android app and the iOS Home Screen app opens the
+ * phone's link sheet; why and how: DESIGN.md, Markdown.
  */
 import { useCallback, useEffect, useState } from "react";
 import { ExternalLink, Link2, Share2 } from "lucide-react";
 
 import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
+import { LONG_PRESS_MS, LONG_PRESS_SLOP } from "./TabStrip.tsx";
 import { copyText } from "../lib/clipboard.ts";
 import { useT } from "../lib/i18n.ts";
 import { inAndroidApp } from "../lib/nativeApp.ts";
+import { inIosHomeScreenApp } from "../lib/safariLinks.ts";
 import { useSettings } from "../lib/settings.ts";
 import { openExternal } from "../lib/externalLink.ts";
 
@@ -47,6 +45,57 @@ export function MarkdownLinkMenu() {
     };
     document.addEventListener("contextmenu", onContextMenu);
     return () => document.removeEventListener("contextmenu", onContextMenu);
+  }, []);
+  useEffect(() => {
+    if (!inIosHomeScreenApp()) return;
+    // iOS fires no contextmenu for a touch: https://bugs.webkit.org/show_bug.cgi?id=213953
+    const root = document.documentElement;
+    root.toggleAttribute("data-ios-link-menu", true);
+    let held: { x: number; y: number; timer: number } | null = null;
+    let opened: HTMLAnchorElement | null = null;
+    const cancel = (): void => {
+      if (held !== null) window.clearTimeout(held.timer);
+      held = null;
+    };
+    const onDown = (event: PointerEvent): void => {
+      cancel();
+      opened = null;
+      if (event.pointerType !== "touch" || !event.isPrimary) return;
+
+      const link = pressedLink(event);
+      if (link === null) return;
+
+      const point = { x: event.clientX, y: event.clientY };
+      held = { ...point, timer: window.setTimeout(() => {
+        held = null;
+        opened = link;
+        setPressed({ link, point });
+      }, LONG_PRESS_MS) };
+    };
+    const onMove = (event: PointerEvent): void => {
+      if (held !== null && Math.hypot(event.clientX - held.x, event.clientY - held.y) > LONG_PRESS_SLOP) cancel();
+    };
+    // a lift may still click the link, which would open it under its own sheet
+    const onClick = (event: MouseEvent): void => {
+      if (opened === null || !(event.target instanceof Node) || !opened.contains(event.target)) return;
+      opened = null;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    document.addEventListener("pointerdown", onDown);
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", cancel);
+    document.addEventListener("pointercancel", cancel);
+    document.addEventListener("click", onClick, true);
+    return () => {
+      cancel();
+      root.removeAttribute("data-ios-link-menu");
+      document.removeEventListener("pointerdown", onDown);
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", cancel);
+      document.removeEventListener("pointercancel", cancel);
+      document.removeEventListener("click", onClick, true);
+    };
   }, []);
   if (pressed === null) return null;
   const { link, point } = pressed;

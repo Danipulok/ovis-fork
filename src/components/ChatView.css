@@ -622,6 +622,13 @@ ol.markdown-list {
   text-underline-offset: var(--space-1);
 }
 
+/* the Home Screen app's own long press on a link selects its words; the app's sheet opens instead */
+:root[data-ios-link-menu] .markdown a {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 .markdown a:focus-visible {
   text-decoration-color: currentColor;
 }

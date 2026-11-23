@@ -3686,13 +3686,16 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
 - Markdown supports headings, lists (a task item `- [x]` / `- [ ]` shows a checked or empty box in
   place of its bullet, not clickable), links, quotes, tables, inline/fenced code and code-copy
   actions.
-  A long press on a rendered link in the Android app opens the phone's sheet (RowMenu,
-  `MarkdownLinkMenu.tsx`) with **Copy link**, **Open link** (the tap's own way) and, where the
-  WebView has `navigator.share`, **Share link**; the link's words are its title, the address under
-  them. Android's WebView draws no link menu of its own, while Chrome, Safari and the iOS app's
-  WKWebView do, and keep theirs: the sheet follows Android Chrome's link menu, cut to those three.
-  Only the WebView's own long press (its `contextmenu`, not a mouse's) opens it, so a tap, a swipe
-  and a press on other words keep their meaning.
+  A long press on a rendered link in the Android app and the iPhone and iPad Home Screen web app
+  opens the phone's sheet (RowMenu, `MarkdownLinkMenu.tsx`) with **Copy link**, **Open link** (the
+  tap's own way) and, where the phone has `navigator.share`, **Share link**; the link's words are
+  its title, the address under them. Android's WebView draws no link menu of its own, and the Home
+  Screen app's opens one press in several and selects the link's words otherwise, while Chrome,
+  Safari and the iOS app's WKWebView keep theirs: the sheet follows Android Chrome's link menu, cut
+  to those three. On Android only the WebView's own long press (its `contextmenu`, not a mouse's)
+  opens it; iOS fires no `contextmenu` for a touch, so there a touch held still on a link for
+  `LONG_PRESS_MS` opens it, the link's words are not selectable, and the click its lift sends is
+  dropped. A tap, a swipe and a press on other words keep their meaning.
   In the iPhone and iPad Home Screen web app, a link to another site opens in Safari, where the
   user is signed in, not in the app's own view: `safariLinks.ts` turns its address into Safari's
   `x-safari-https:` (undocumented by Apple) for every link, terminal links included. A link to the
