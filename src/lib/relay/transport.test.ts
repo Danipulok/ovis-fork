@@ -210,6 +210,27 @@ it("sends a request body where the browser has no Request.body, as Firefox", asy
   expect(await response.text()).toBe('{"a":1}');
 });
 
+it("sends a body larger than the mux queue that the browser's Request.body gives as one chunk, as Safari", async () => {
+  const native = globalThis.Request;
+  globalThis.Request = class extends native {
+    sent = "";
+    constructor(input: RequestInfo | URL, init?: RequestInit) {
+      super(input, init);
+      if (typeof init?.body === "string") this.sent = init.body;
+    }
+    override get body(): ReadableStream<Uint8Array<ArrayBuffer>> | null {
+      if (!this.sent) return super.body;
+      const bytes = new TextEncoder().encode(this.sent);
+      return new ReadableStream<Uint8Array<ArrayBuffer>>({ start(controller) { controller.enqueue(bytes); controller.close(); } });
+    }
+  };
+  cleanups.push(() => { globalThis.Request = native; });
+  const f = await fixture({ dispatch: async (request) => new Response(String((await request.arrayBuffer()).byteLength)) });
+  const body = "x".repeat(8 * 1024 * 1024);
+  const response = await f.transport.fetch("/api/pane/image", { method: "POST", headers: { "content-type": "application/json" }, body });
+  expect(await response.text()).toBe(String(body.length));
+});
+
 /** A browser without Request.body (Firefox) for the page's requests: bodies given to them and their reads are counted, and reads wait for `hold`. */
 function firefoxRequests(hold: Promise<void> = Promise.resolve()) {
   const native = globalThis.Request;

@@ -249,7 +249,11 @@ export class HttpStream extends MuxStream {
         const result = await reader.read();
         if (!this.live || uploadStopped()) return;
         if (result.done) { this.end(); return; }
-        if (result.value.length) await this.write(result.value);
+        // A body stream may give the whole body as one chunk, as Safari's does for a string body; past the queue bound that would reset the stream
+        // https://github.com/WebKit/WebKit/blob/f1fc4bbc2814416c986cb9a33e2299e5c623fab4/Source/WebCore/Modules/fetch/FetchBody.cpp#L205-L207
+        for (let offset = 0; offset < result.value.length && this.live && !uploadStopped(); offset += WS_CONTINUATION_CAPACITY) {
+          await this.write(result.value.subarray(offset, offset + WS_CONTINUATION_CAPACITY));
+        }
       }
     } catch (error) {
       if (this.live && !uploadStopped()) this.reset("internal_error");
