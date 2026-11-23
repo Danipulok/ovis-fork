@@ -195,6 +195,28 @@ it("sends a request body where the browser has no Request.body, as Firefox", asy
   expect(await response.text()).toBe('{"a":1}');
 });
 
+it("sends a buffered body larger than the mux queue that the browser streams as one chunk, as Safari", async () => {
+  const native = globalThis.Request;
+  const page = new WeakSet<Request>();
+  globalThis.Request = class extends native {
+    constructor(input: RequestInfo | URL, init?: RequestInit) {
+      super(input, init);
+      if (!(init?.body instanceof ReadableStream)) page.add(this);
+    }
+    override get body(): ReadableStream<Uint8Array<ArrayBuffer>> | null { return page.has(this) ? undefined as unknown as null : super.body; }
+  };
+  const stream = Blob.prototype.stream;
+  Blob.prototype.stream = function (this: Blob): ReadableStream<Uint8Array<ArrayBuffer>> {
+    const blob = this;
+    return new ReadableStream<Uint8Array<ArrayBuffer>>({ async start(controller) { controller.enqueue(new Uint8Array(await blob.arrayBuffer())); controller.close(); } });
+  };
+  cleanups.push(() => { globalThis.Request = native; Blob.prototype.stream = stream; });
+  const f = await fixture({ dispatch: async (request) => new Response(String((await request.arrayBuffer()).byteLength)) });
+  const body = "x".repeat(8 * 1024 * 1024);
+  const response = await f.transport.fetch("/api/pane/image", { method: "POST", headers: { "content-type": "application/json" }, body });
+  expect(await response.text()).toBe(String(body.length));
+});
+
 /** A browser without Request.body (Firefox) for the page's requests: bodies given to them and their reads are counted, and reads wait for `hold`. */
 function firefoxRequests(hold: Promise<void> = Promise.resolve()) {
   const native = globalThis.Request;
