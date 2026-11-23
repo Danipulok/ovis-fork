@@ -53,20 +53,46 @@ async function canvasJpeg(image: Blob): Promise<Blob | null> {
   }
 }
 
+const JPEG_START = 0xd8;
+const JPEG_SCAN = 0xda;
+/** APP1 holds Exif and XMP (location, device, date), APP13 IPTC: https://exiftool.org/TagNames/JPEG.html */
+const JPEG_METADATA: ReadonlySet<number> = new Set([0xe1, 0xed]);
+
+/** The JPEG's bytes without its APP1 and APP13 segments; anything that does not open as a JPEG as it is. */
+export async function withoutJpegMetadata<T extends Blob>(file: T): Promise<T | Blob> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (bytes[0] !== 0xff || bytes[1] !== JPEG_START) return file;
+
+  const kept: Uint8Array<ArrayBuffer>[] = [bytes.subarray(0, 2)];
+  let offset = 2;
+  while (offset + 4 <= bytes.length && bytes[offset] === 0xff && bytes[offset + 1] !== JPEG_SCAN) {
+    const end = offset + 2 + ((bytes[offset + 2]! << 8) | bytes[offset + 3]!);
+    if (!JPEG_METADATA.has(bytes[offset + 1]!)) kept.push(bytes.subarray(offset, end));
+    offset = end;
+  }
+
+  kept.push(bytes.subarray(offset));
+  return new Blob(kept, { type: file.type });
+}
+
 /**
  * A phone photo as a JPEG of at most `MAX_PHOTO_SIDE` a side: an iPhone's HEIC or HEIF one always,
  * since the agents read only PNG, JPEG, GIF and WebP
  * (https://platform.claude.com/docs/en/build-with-claude/vision), a JPEG one too, which drops its
- * camera metadata. Any other file (a screenshot's PNG), or one this browser cannot decode, as it is.
+ * camera metadata; a JPEG this browser cannot redraw loses that metadata from its bytes instead. Any
+ * other file (a screenshot's PNG), or a HEIC one this browser cannot decode, as it is.
  */
 export async function uploadableImage<T extends Blob>(file: T, toJpeg: (image: Blob) => Promise<Blob | null> = canvasJpeg): Promise<T | File> {
   const name = file instanceof File ? file.name : "";
+  const lastModified = file instanceof File ? file.lastModified : Date.now();
   const heic = HEIC_TYPES.has(file.type.toLowerCase()) || HEIC_NAME.test(name);
   if (!heic && file.type.toLowerCase() !== "image/jpeg") return file;
 
   const jpeg = await toJpeg(file).catch(() => null);
-  if (jpeg === null) return file;
+  if (jpeg === null && heic) return file;
+
+  if (jpeg === null) return new File([await withoutJpegMetadata(file)], name, { type: file.type, lastModified });
 
   const base = HEIC_NAME.test(name) ? name.replace(HEIC_NAME, "") : name.replace(/\.(jpe?g)$/i, "") || "photo";
-  return new File([jpeg], `${base}.jpg`, { type: "image/jpeg", lastModified: file instanceof File ? file.lastModified : Date.now() });
+  return new File([jpeg], `${base}.jpg`, { type: "image/jpeg", lastModified });
 }

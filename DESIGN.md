@@ -4691,7 +4691,8 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   about 1 MB, so it crosses the relay at once and fast; the agents read little more than that.
   An iPhone's HEIC or HEIF photo always is, since the agents read PNG, JPEG, GIF and WebP only; a
   JPEG one always too, since the redraw drops its camera metadata (location, device, date); a PNG
-  screenshot never. One the browser cannot decode uploads as it is (`uploadableImage`,
+  screenshot never. A JPEG the browser cannot redraw uploads with its APP1 and APP13 segments
+  (Exif, XMP, IPTC) cut out of its bytes, a HEIC one as it is (`uploadableImage`,
   `lib/composerImageMime.ts`).
 - While a phone's keyboard is up, a tap on the transcript or a drag down it (`32px`) puts the
   keyboard away. Each only blurs the field, so the draft stays. The prompt card, which can stand

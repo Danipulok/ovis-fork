@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { composerImageMimeType, normalizeComposerImageFile, uploadableImage } from "./composerImageMime.ts";
+import { composerImageMimeType, normalizeComposerImageFile, uploadableImage, withoutJpegMetadata } from "./composerImageMime.ts";
 
 describe("composerImageMimeType", () => {
   test("infers supported image types for missing and generic MIME types", () => {
@@ -36,6 +36,25 @@ describe("composerImageMimeType", () => {
   });
 });
 
+const segment = (marker: number, body: readonly number[]): number[] => [0xff, marker, 0, body.length + 2, ...body];
+const jfif = segment(0xe0, [0x4a, 0x46, 0x49, 0x46, 0]);
+const icc = segment(0xe2, [1, 2, 3]);
+const scan = [...segment(0xda, [9, 9]), 0x11, 0xff, 0xe1, 0x22, 0xff, 0xd9];
+const withoutMetadataBytes: number[] = [0xff, 0xd8, ...jfif, ...icc, ...scan];
+const jpegBytes: Uint8Array<ArrayBuffer> = new Uint8Array([0xff, 0xd8, ...jfif, ...segment(0xe1, [0x45, 0x78, 0x69, 0x66, 0, 0, 7]), ...icc, ...segment(0xed, [8, 8]), ...scan]);
+
+describe("withoutJpegMetadata", () => {
+  test("drops APP1 and APP13, keeps every other segment and the scan byte for byte", async () => {
+    const stripped = await withoutJpegMetadata(new Blob([jpegBytes], { type: "image/jpeg" }));
+    expect([...new Uint8Array(await stripped.arrayBuffer())]).toEqual(withoutMetadataBytes);
+  });
+
+  test("leaves bytes that do not open as a JPEG alone", async () => {
+    const other = new Blob(["not a jpeg"], { type: "image/jpeg" });
+    expect(await withoutJpegMetadata(other)).toBe(other);
+  });
+});
+
 describe("uploadableImage", () => {
   const jpeg = async (): Promise<Blob> => new Blob(["jpeg bytes"], { type: "image/jpeg" });
 
@@ -67,7 +86,13 @@ describe("uploadableImage", () => {
 
     const small = new File(["tiny"], "IMG_3719.jpg", { type: "image/jpeg" });
     expect(await (await uploadableImage(small, jpeg)).text()).toBe("jpeg bytes");
-    expect(await uploadableImage(photo, async () => null)).toBe(photo);
+  });
+
+  test("cuts the location, device and date out of a JPEG this browser cannot redraw", async () => {
+    const photo = new File([jpegBytes], "IMG_3720.jpg", { type: "image/jpeg", lastModified: 7 });
+    const sent = await uploadableImage(photo, async () => null);
+    expect([sent.name, sent.type, sent.lastModified]).toEqual(["IMG_3720.jpg", "image/jpeg", 7]);
+    expect([...new Uint8Array(await sent.arrayBuffer())]).toEqual(withoutMetadataBytes);
   });
 
   test("leaves every other file alone without decoding it", async () => {
