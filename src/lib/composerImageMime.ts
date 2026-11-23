@@ -24,9 +24,15 @@ export function normalizeComposerImageFile(file: File): File {
 
 const HEIC_TYPES: ReadonlySet<string> = new Set(["image/heic", "image/heif", "image/heic-sequence", "image/heif-sequence"]);
 const HEIC_NAME = /\.(heic|heif)$/i;
-/** A 48 MP iPhone photo is a 190 MB canvas, near iOS's 8192 by 8192 limit; 4096 a side keeps it at 64 MB.
- *  https://github.com/WebKit/WebKit/blob/09c9c87594bc34ed7d62db836b29091798073eb8/Source/WebCore/html/CanvasBase.cpp#L119-L131 */
-const MAX_JPEG_SIDE = 4096;
+/**
+ * A phone photo is drawn at most 2048 px a side, about 1 MB as JPEG, so it goes over the relay at
+ * once: OpenAI scales a longer side down to 2048 anyway
+ * (https://developers.openai.com/api/docs/guides/images-vision), Claude to 2576 on its newest models
+ * and 1568 on the rest (https://platform.claude.com/docs/en/build-with-claude/vision). A whole
+ * 48 MP photo is also a 190 MB canvas, past what iOS draws.
+ * https://github.com/WebKit/WebKit/blob/09c9c87594bc34ed7d62db836b29091798073eb8/Source/WebCore/html/CanvasBase.cpp#L119-L131
+ */
+const MAX_PHOTO_SIDE = 2048;
 
 /** Decodes an image this browser can draw and encodes it as JPEG; null when the canvas refuses. */
 async function canvasJpeg(image: Blob): Promise<Blob | null> {
@@ -36,29 +42,31 @@ async function canvasJpeg(image: Blob): Promise<Blob | null> {
     element.src = url;
     await element.decode();
 
-    const scale = Math.min(1, MAX_JPEG_SIDE / Math.max(element.naturalWidth, element.naturalHeight));
+    const scale = Math.min(1, MAX_PHOTO_SIDE / Math.max(element.naturalWidth, element.naturalHeight));
     const canvas = document.createElement("canvas");
     canvas.width = Math.round(element.naturalWidth * scale);
     canvas.height = Math.round(element.naturalHeight * scale);
     canvas.getContext("2d")?.drawImage(element, 0, 0, canvas.width, canvas.height);
-    return await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
+    return await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
   } finally {
     URL.revokeObjectURL(url);
   }
 }
 
 /**
- * An iPhone's HEIC or HEIF photo as a JPEG, since the agents read only PNG, JPEG, GIF and WebP
- * (https://platform.claude.com/docs/en/build-with-claude/vision); any other file, or one this browser
- * cannot decode, as it is.
+ * A phone photo as a JPEG of at most `MAX_PHOTO_SIDE` a side: an iPhone's HEIC or HEIF one always,
+ * since the agents read only PNG, JPEG, GIF and WebP
+ * (https://platform.claude.com/docs/en/build-with-claude/vision), a JPEG one when that makes it
+ * smaller. Any other file (a screenshot's PNG), or one this browser cannot decode, as it is.
  */
 export async function uploadableImage<T extends Blob>(file: T, toJpeg: (image: Blob) => Promise<Blob | null> = canvasJpeg): Promise<T | File> {
   const name = file instanceof File ? file.name : "";
-  if (!HEIC_TYPES.has(file.type.toLowerCase()) && !HEIC_NAME.test(name)) return file;
+  const heic = HEIC_TYPES.has(file.type.toLowerCase()) || HEIC_NAME.test(name);
+  if (!heic && file.type.toLowerCase() !== "image/jpeg") return file;
 
   const jpeg = await toJpeg(file).catch(() => null);
-  if (jpeg === null) return file;
+  if (jpeg === null || (!heic && jpeg.size >= file.size)) return file;
 
-  const base = HEIC_NAME.test(name) ? name.replace(HEIC_NAME, "") : name || "photo";
+  const base = HEIC_NAME.test(name) ? name.replace(HEIC_NAME, "") : name.replace(/\.(jpe?g)$/i, "") || "photo";
   return new File([jpeg], `${base}.jpg`, { type: "image/jpeg", lastModified: file instanceof File ? file.lastModified : Date.now() });
 }

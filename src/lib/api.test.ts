@@ -120,7 +120,7 @@ it("refuses a 40 MiB file in the browser with the 32 MB limit named, before uplo
   expect(MAX_ATTACHMENT_BYTES).toBe(32 * 1024 * 1024);
 });
 
-it("uploads an iPhone's HEIC photo as the JPEG the browser drew, scaled to 4096 a side", async () => {
+it("uploads an iPhone's HEIC or JPEG photo as the JPEG the browser drew, scaled to 2048 a side", async () => {
   const bodies: { content_type: string; name: string; data_base64: string }[] = [];
   globalThis.fetch = (async (_url: string, init?: RequestInit) => {
     bodies.push(JSON.parse(String(init?.body)));
@@ -139,15 +139,18 @@ it("uploads an iPhone's HEIC photo as the JPEG the browser drew, scaled to 4096 
   URL.createObjectURL = () => "blob:photo";
   URL.revokeObjectURL = () => {};
   try {
-    const path = await uploadPaneImage("p1", new File(["heic"], "IMG_0001.HEIC", { type: "image/heic" }));
-    expect(path).toBe("/work/.ovis/IMG_0001-1.jpg");
+    const paths = [
+      await uploadPaneImage("p1", new File(["heic"], "IMG_0001.HEIC", { type: "image/heic" })),
+      await uploadPaneImage("p1", new File(["x".repeat(4096)], "IMG_3718.jpeg", { type: "image/jpeg" })),
+    ];
+    expect(paths).toEqual(["/work/.ovis/IMG_0001-1.jpg", "/work/.ovis/IMG_0001-1.jpg"]);
   } finally {
     Object.assign(globalThis, { Image: saved.Image, document: saved.document });
     URL.createObjectURL = saved.createObjectURL;
     URL.revokeObjectURL = saved.revokeObjectURL;
   }
-  expect(drawn).toEqual([[0, 0, 4096, 3072]]);
-  expect(bodies.map(({ content_type, name, data_base64 }) => [content_type, name, atob(data_base64)])).toEqual([["image/jpeg", "IMG_0001.jpg", "jpeg"]]);
+  expect(drawn).toEqual([[0, 0, 2048, 1536], [0, 0, 2048, 1536]]);
+  expect(bodies.map(({ content_type, name, data_base64 }) => [content_type, name, atob(data_base64)])).toEqual([["image/jpeg", "IMG_0001.jpg", "jpeg"], ["image/jpeg", "IMG_3718.jpg", "jpeg"]]);
 });
 
 it("posts the full safe telemetry snapshot and current notice version", async () => {
