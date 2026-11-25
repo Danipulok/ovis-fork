@@ -236,6 +236,9 @@ describe("uploadFailure", () => {
     const emptyHttp11 = await errorFrom("/api/pane/image", new Response("", { status: 502, statusText: "Bad Gateway" }));
     expect(uploadFailure(emptyHttp11).detail).toBe("HTTP 502");
     expect(userFailure(emptyHttp11).detail).toBe("Bad Gateway");
+
+    const customReason = await errorFrom("/api/pane/image", new Response("", { status: 502, statusText: "Upstream TLS permission denied" }));
+    expect(uploadFailure(customReason)).toMatchObject({ kind: "refused", cause: null, detail: "HTTP 502" });
   });
 });
 
@@ -247,9 +250,10 @@ describe("failureReason", () => {
     expect(failureReason(userFailure(new Error(" ")))).toBeNull();
   });
 
-  it("caps multiline and overly long diagnostics to a single line", () => {
+  it("caps multiline, Unicode line-break, and overly long diagnostics to a single line", () => {
     const multiline = ["Upload failed", ...Array.from({ length: 60 }, (_, i) => `detail line ${i + 1}`)].join("\n");
     expect(failureReason(uploadFailure(api(502, multiline)))).toBe("Upload failed");
+    expect(failureReason(uploadFailure(api(502, `Upload failed${"\u2028".repeat(60)}tail`)))).toBe("Upload failed");
     expect(failureReason(uploadFailure(api(502, "\n  First diagnostic line  \nsecond line")))).toBe("First diagnostic line");
     const longLine = "x".repeat(300);
     const reason = failureReason(uploadFailure(api(502, longLine)));
