@@ -1084,7 +1084,10 @@ export function Composer({
     : hint === "uploading" ? t("Uploading file…") : offlineSentence;
   const failed = note !== null && typeof note === "object" && "failure" in note ? note : null;
   const failedReason = failed === null ? null : failureReason(failed.failure);
-  const shownDetail = failed !== null && failed.failure.cause !== null ? failed.failure.detail : null;
+  const shownDetail = failed === null ? null
+    : failed.failure.cause !== null || (failed.failure.detail !== null && failedReason !== failed.failure.detail)
+      ? failed.failure.detail
+      : null;
   const noteLine = note === null ? null : typeof note === "string" ? note : "failure" in note
     ? [failedReason === null ? t("{name} could not be attached", { name: note.attachment.file.name }) : t("{name} could not be attached: {reason}", { name: note.attachment.file.name, reason: failedReason }), note.attachment.leftOut].filter((part) => part !== null).join(" ")
     : note.note;

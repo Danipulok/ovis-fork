@@ -7,7 +7,7 @@ import * as usageModule from "../lib/usage.ts";
 import * as voiceModule from "./VoiceInput.tsx";
 import * as facesModule from "../lib/fontFaces.ts";
 import { composerDrafts } from "../lib/composerDraft.ts";
-import { ApiError } from "../lib/api.ts";
+import { ApiError, errorFrom } from "../lib/api.ts";
 import { paneLifetimes } from "../lib/paneLifetime.ts";
 
 const pane = "upload-failure-pane", draftKey = `ovis:composer-draft:${pane}`;
@@ -70,4 +70,30 @@ it.each([
   await act(async () => { input.props.onChange({ currentTarget: { files: [photo], value: "" } }); });
   expect(note()).toBe(said);
   expect(details()).toEqual(detail);
+});
+
+it("shows HTTP status for an empty HTTP/1.1 response with a reason phrase", async () => {
+  const error = await errorFrom("/api/pane/image", new Response("", { status: 502, statusText: "Bad Gateway" }));
+  const upload = async (): Promise<string> => { throw error; };
+  await act(async () => {
+    renderer = create(<Composer paneId={pane} agent="claude" agentStatus="idle" connected autoFocus={false} onSend={() => true} onAbort={() => {}} onUploadImage={upload} />);
+  });
+  const input = renderer!.root.find((node) => node.type === "input" && node.props.type === "file");
+  const photo = new File(["jpeg"], "IMG_4242.jpg", { type: "image/jpeg" });
+  await act(async () => { input.props.onChange({ currentTarget: { files: [photo], value: "" } }); });
+  expect(note()).toBe("IMG_4242.jpg could not be attached: HTTP 502");
+  expect(details()).toEqual([]);
+});
+
+it("caps a multiline upload diagnostic on the note line and keeps the full message in Details", async () => {
+  const full = ["Upload failed", ...Array.from({ length: 60 }, (_, i) => `diagnostic line ${i + 1}`)].join("\n");
+  const upload = async (): Promise<string> => { throw new ApiError("/api/pane/image", 502, full, null); };
+  await act(async () => {
+    renderer = create(<Composer paneId={pane} agent="claude" agentStatus="idle" connected autoFocus={false} onSend={() => true} onAbort={() => {}} onUploadImage={upload} />);
+  });
+  const input = renderer!.root.find((node) => node.type === "input" && node.props.type === "file");
+  const photo = new File(["jpeg"], "IMG_4242.jpg", { type: "image/jpeg" });
+  await act(async () => { input.props.onChange({ currentTarget: { files: [photo], value: "" } }); });
+  expect(note()).toBe("IMG_4242.jpg could not be attached: Upload failed");
+  expect(details()).toEqual([full]);
 });
