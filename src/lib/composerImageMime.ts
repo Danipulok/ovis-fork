@@ -25,7 +25,8 @@ export function normalizeComposerImageFile(file: File): File {
 const HEIC_TYPES: ReadonlySet<string> = new Set(["image/heic", "image/heif"]);
 const HEIC_NAME = /\.(heic|heif)$/i;
 const HEIF_STILL_BRANDS: ReadonlySet<string> = new Set(["heic", "heix", "mif1", "heif"]);
-const HEIF_SEQUENCE_BRANDS: ReadonlySet<string> = new Set(["msf1", "hevc", "hevx", "hevs", "avis"]);
+const HEIF_EXCLUDED_BRANDS: ReadonlySet<string> = new Set(["msf1", "hevc", "hevx", "hevs", "avis", "avif"]);
+const MAX_FTYP_INSPECT_BYTES = 4096;
 /** A 48 MP iPhone photo is a 190 MB canvas, near iOS's 8192 by 8192 limit; 4096 a side keeps it at 64 MB.
  *  https://github.com/WebKit/WebKit/blob/09c9c87594bc34ed7d62db836b29091798073eb8/Source/WebCore/html/CanvasBase.cpp#L119-L131 */
 const MAX_JPEG_SIDE = 4096;
@@ -36,19 +37,33 @@ function brandAt(bytes: Uint8Array, offset: number): string {
 
 /**
  * Inspects an ISO-BMFF `ftyp` header and returns true only for still HEIC/HEIF images.
- * Animated sequences (e.g. `msf1`, `hevc`, `hevs`) return false even when they also list `heic`,
+ * Animated sequences (e.g. `msf1`, `hevc`, `hevs`, `avis`), AVIF containers, oversized/truncated `ftyp` boxes,
  * and non-HEIF payloads (such as a PNG renamed `.heic`) return false.
  */
 export function isStillHeifContainer(bytes: Uint8Array): boolean {
   if (bytes.byteLength < 16) return false;
   if (brandAt(bytes, 4) !== "ftyp") return false;
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const declared = view.getUint32(0, false);
-  const end = declared === 0 ? bytes.byteLength : Math.min(bytes.byteLength, declared);
-  if (end < 16) return false;
-  const brands = [brandAt(bytes, 8)];
-  for (let offset = 16; offset + 4 <= end; offset += 4) brands.push(brandAt(bytes, offset));
-  if (brands.some((brand) => HEIF_SEQUENCE_BRANDS.has(brand))) return false;
+  const size32 = view.getUint32(0, false);
+  let headerStart = 8;
+  let end: number;
+  if (size32 === 1) {
+    if (bytes.byteLength < 24) return false;
+    const large = view.getBigUint64(8, false);
+    if (large < 24n || large > BigInt(bytes.byteLength)) return false;
+    end = Number(large);
+    headerStart = 16;
+  } else if (size32 === 0) {
+    end = bytes.byteLength;
+  } else {
+    if (size32 < 16 || size32 > bytes.byteLength) return false;
+    end = size32;
+  }
+  const compatStart = headerStart + 8;
+  if (end < compatStart) return false;
+  const brands = [brandAt(bytes, headerStart)];
+  for (let offset = compatStart; offset + 4 <= end; offset += 4) brands.push(brandAt(bytes, offset));
+  if (brands.some((brand) => HEIF_EXCLUDED_BRANDS.has(brand))) return false;
   return brands.some((brand) => HEIF_STILL_BRANDS.has(brand));
 }
 
@@ -87,7 +102,7 @@ export async function uploadableImage<T extends Blob>(file: T, toJpeg: (image: B
     || ((normalizedType === "" || normalizedType === "application/octet-stream") && HEIC_NAME.test(name));
   if (!heicCandidate) return file;
 
-  const header = new Uint8Array(await file.slice(0, 64).arrayBuffer());
+  const header = new Uint8Array(await file.slice(0, MAX_FTYP_INSPECT_BYTES).arrayBuffer());
   if (!isStillHeifContainer(header)) return file;
 
   const jpeg = await toJpeg(file).catch(() => null);

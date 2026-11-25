@@ -70,19 +70,46 @@ describe("uploadableImage", () => {
     expect(await converted[0]!.text()).toBe("jpeg bytes");
   });
 
-  test("preserves animated HEIC/HEIF sequences without collapsing frames, even when declared as image/heic or unnamed MIME", async () => {
+  test("preserves animated HEIC/HEIF sequences, AVIF containers, and oversized ftyp boxes without collapsing frames, and handles 64-bit ftyp sizes", async () => {
+    const ftypWithBrands = (major: string, compat: string[]): Uint8Array<ArrayBuffer> => {
+      const size = 16 + compat.length * 4;
+      const buf = new Uint8Array(size);
+      new DataView(buf.buffer).setUint32(0, size, false);
+      buf.set(new TextEncoder().encode(`ftyp${major}`), 4);
+      compat.forEach((b, i) => buf.set(new TextEncoder().encode(b), 16 + i * 4));
+      return buf;
+    };
+    const lateSequence = ftypWithBrands("heic", [
+      "mif1", "heic", "pad1", "pad2", "pad3", "pad4", "pad5", "pad6",
+      "pad7", "pad8", "pad9", "pa10", "avis", "msf1",
+    ]);
+    const avifStill = ftypWithBrands("avif", ["avif", "mif1", "miaf"]);
     const sequences = [
       new File([ANIMATED_HEIC], "sticker.heics", { type: "image/heic-sequence" }),
       new File([ANIMATED_HEIC], "animated.heic", { type: "image/heic-sequence" }),
       new File([ANIMATED_HEIC], "burst.heif", { type: "image/heif-sequence" }),
       new File([ANIMATED_HEIC], "sticker.heics", { type: "image/heic" }),
       new File([ANIMATED_HEIC], "sticker.heic", { type: "" }),
+      new File([lateSequence], "late-seq.heif", { type: "" }),
+      new File([avifStill], "white.heif", { type: "" }),
     ];
     const decoded: Blob[] = [];
     for (const file of sequences) {
       expect(await uploadableImage(file, async (blob) => { decoded.push(blob); return jpeg(); })).toBe(file);
     }
     expect(decoded).toEqual([]);
+
+    // 64-bit largesize ftyp box (size32 === 1) for a still HEIC photo converts normally.
+    const largeFtyp = new Uint8Array(32);
+    const view = new DataView(largeFtyp.buffer);
+    view.setUint32(0, 1, false);
+    largeFtyp.set(new TextEncoder().encode("ftyp"), 4);
+    view.setBigUint64(8, 32n, false);
+    largeFtyp.set(new TextEncoder().encode("heic"), 16);
+    largeFtyp.set(new TextEncoder().encode("mif1"), 24);
+    const largePhoto = new File([largeFtyp], "large.heic", { type: "image/heic" });
+    const converted = await uploadableImage(largePhoto, async () => jpeg());
+    expect(converted.type).toBe("image/jpeg");
   });
 
   test("sends the photo as it is when this browser cannot decode it", async () => {
