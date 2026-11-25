@@ -155,6 +155,35 @@ it("uploads an iPhone's HEIC photo as the JPEG the browser drew, scaled to 4096 
   expect(bodies.map(({ content_type, name, data_base64 }) => [content_type, name, atob(data_base64)])).toEqual([["image/jpeg", "IMG_0001.jpg", "jpeg"], ["image/jpeg", "IMG_0002.jpg", "jpeg"]]);
 });
 
+it("falls back to the original HEIC file without encoding a blank JPEG when canvas 2D context is unavailable", async () => {
+  const bodies: { content_type: string; name: string; data_base64: string }[] = [];
+  let toBlobCalls = 0;
+  globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+    bodies.push(JSON.parse(String(init?.body)));
+    return Response.json({ ok: true, path: "/work/.ovis/IMG_0001.heic" });
+  }) as typeof fetch;
+  const saved = { Image: globalThis.Image, document: globalThis.document, createObjectURL: URL.createObjectURL, revokeObjectURL: URL.revokeObjectURL };
+  Object.assign(globalThis, {
+    Image: class { src = ""; naturalWidth = 0; naturalHeight = 0; async decode() { this.naturalWidth = 1000; this.naturalHeight = 800; } },
+    document: { createElement: () => ({
+      width: 0, height: 0,
+      getContext() { return null; },
+      toBlob(resolve: (blob: Blob) => void) { toBlobCalls += 1; resolve(new Blob(["blank-jpeg"], { type: "image/jpeg" })); },
+    }) },
+  });
+  URL.createObjectURL = () => "blob:photo";
+  URL.revokeObjectURL = () => {};
+  try {
+    expect(await uploadPaneImage("p1", new File(["heic"], "IMG_0001.HEIC", { type: "image/heic" }))).toBe("/work/.ovis/IMG_0001.heic");
+  } finally {
+    Object.assign(globalThis, { Image: saved.Image, document: saved.document });
+    URL.createObjectURL = saved.createObjectURL;
+    URL.revokeObjectURL = saved.revokeObjectURL;
+  }
+  expect(toBlobCalls).toBe(0);
+  expect(bodies.map(({ content_type, name, data_base64 }) => [content_type, name, atob(data_base64)])).toEqual([["image/heic", "IMG_0001.HEIC", "heic"]]);
+});
+
 it("posts the full safe telemetry snapshot and current notice version", async () => {
   const settings = telemetrySettingsSnapshot({
     ...DEFAULT_SETTINGS,

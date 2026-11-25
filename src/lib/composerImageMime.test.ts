@@ -43,16 +43,28 @@ describe("uploadableImage", () => {
     const cases: readonly File[] = [
       new File(["heic bytes"], "IMG_0001.HEIC", { type: "image/heic", lastModified: 7 }),
       new File(["heic bytes"], "IMG_0002.heic", { type: "" }),
+      new File(["heic bytes"], "IMG_0003.HEIC", { type: "application/octet-stream" }),
       new File(["heif bytes"], "photo.heif", { type: "image/heif" }),
-      new File(["heic bytes"], "photo", { type: "image/heic-sequence" }),
-      new File(["heif bytes"], "burst", { type: "image/heif-sequence" }),
     ];
     const converted = await Promise.all(cases.map((file) => uploadableImage(file, jpeg)));
     expect(converted.map((file) => [file.name, file.type])).toEqual([
-      ["IMG_0001.jpg", "image/jpeg"], ["IMG_0002.jpg", "image/jpeg"], ["photo.jpg", "image/jpeg"], ["photo.jpg", "image/jpeg"], ["burst.jpg", "image/jpeg"],
+      ["IMG_0001.jpg", "image/jpeg"], ["IMG_0002.jpg", "image/jpeg"], ["IMG_0003.jpg", "image/jpeg"], ["photo.jpg", "image/jpeg"],
     ]);
     expect(converted[0]!.lastModified).toBe(7);
     expect(await converted[0]!.text()).toBe("jpeg bytes");
+  });
+
+  test("preserves animated HEIC/HEIF sequences without collapsing frames", async () => {
+    const sequences = [
+      new File(["heics bytes"], "sticker.heics", { type: "image/heic-sequence" }),
+      new File(["heics bytes"], "animated.heic", { type: "image/heic-sequence" }),
+      new File(["heifs bytes"], "burst.heif", { type: "image/heif-sequence" }),
+    ];
+    const decoded: Blob[] = [];
+    for (const file of sequences) {
+      expect(await uploadableImage(file, async (blob) => { decoded.push(blob); return jpeg(); })).toBe(file);
+    }
+    expect(decoded).toEqual([]);
   });
 
   test("sends the photo as it is when this browser cannot decode it", async () => {
@@ -62,9 +74,13 @@ describe("uploadableImage", () => {
   });
 
   test("leaves every other file alone without decoding it", async () => {
-    const others = [new File(["png"], "shot.png", { type: "image/png" }), new File(["log"], "notes.heic.txt", { type: "text/plain" })];
+    const others = [
+      new File(["png"], "shot.png", { type: "image/png" }),
+      new File(["png"], "renamed.heic", { type: "image/png" }),
+      new File(["log"], "notes.heic.txt", { type: "text/plain" }),
+    ];
     const decoded: Blob[] = [];
-    for (const file of others) expect(await uploadableImage(file, async (blob) => { decoded.push(blob); return null; })).toBe(file);
+    for (const file of others) expect(await uploadableImage(file, async (blob) => { decoded.push(blob); return jpeg(); })).toBe(file);
     expect(decoded).toEqual([]);
   });
 });
