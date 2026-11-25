@@ -140,9 +140,10 @@ it("uploads an iPhone's HEIC photo as the JPEG the browser drew, scaled to 4096 
   });
   URL.createObjectURL = () => "blob:photo";
   URL.revokeObjectURL = (url: string) => { revoked.push(url); };
+  const stillHeic = new Uint8Array([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63, 0, 0, 0, 0, 0x6d, 0x69, 0x66, 0x31, 0x68, 0x65, 0x69, 0x63]);
   try {
     for (const name of ["IMG_0001.HEIC", "IMG_0002.HEIC"]) {
-      expect(await uploadPaneImage("p1", new File(["heic"], name, { type: "image/heic" }))).toBe("/work/.ovis/paste-20261123-212127-ee17a8b2.jpg");
+      expect(await uploadPaneImage("p1", new File([stillHeic], name, { type: "image/heic" }))).toBe("/work/.ovis/paste-20261123-212127-ee17a8b2.jpg");
     }
   } finally {
     Object.assign(globalThis, { Image: saved.Image, document: saved.document });
@@ -173,15 +174,16 @@ it("falls back to the original HEIC file without encoding a blank JPEG when canv
   });
   URL.createObjectURL = () => "blob:photo";
   URL.revokeObjectURL = () => {};
+  const stillHeic = new Uint8Array([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63, 0, 0, 0, 0, 0x6d, 0x69, 0x66, 0x31, 0x68, 0x65, 0x69, 0x63]);
   try {
-    expect(await uploadPaneImage("p1", new File(["heic"], "IMG_0001.HEIC", { type: "image/heic" }))).toBe("/work/.ovis/IMG_0001.heic");
+    expect(await uploadPaneImage("p1", new File([stillHeic], "IMG_0001.HEIC", { type: "image/heic" }))).toBe("/work/.ovis/IMG_0001.heic");
   } finally {
     Object.assign(globalThis, { Image: saved.Image, document: saved.document });
     URL.createObjectURL = saved.createObjectURL;
     URL.revokeObjectURL = saved.revokeObjectURL;
   }
   expect(toBlobCalls).toBe(0);
-  expect(bodies.map(({ content_type, name, data_base64 }) => [content_type, name, atob(data_base64)])).toEqual([["image/heic", "IMG_0001.HEIC", "heic"]]);
+  expect(bodies.map(({ content_type, name, data_base64 }) => [content_type, name, Array.from(Uint8Array.from(atob(data_base64), (c) => c.charCodeAt(0)))])).toEqual([["image/heic", "IMG_0001.HEIC", Array.from(stillHeic)]]);
 });
 
 it("posts the full safe telemetry snapshot and current notice version", async () => {
