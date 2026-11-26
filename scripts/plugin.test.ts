@@ -893,6 +893,45 @@ describe("ovis join, as the command runs it", () => {
   });
 });
 
+for (const encoding of ["ASCII", "Unicode"]) {
+  it.skipIf(process.platform === "win32")(`logout reads a healthy ${encoding} token-protected server without printing the token`, async () => {
+    const { pairingPc } = await import("../server/account/pairing.test-helpers.ts");
+    const token = encoding === "ASCII" ? "logout-fixture-token" : "logout-fixture-🔒";
+    const herdrSocket = process.env["HERDR_SOCKET"];
+    const unix = join(scratch, "herdr.sock");
+    const herdr = Bun.listen<{ line: string }>({ unix, socket: {
+      open(client) { client.data = { line: "" }; },
+      data(client, chunk) {
+        client.data.line += chunk.toString();
+        if (!client.data.line.includes("\n")) return;
+        const { id, method } = JSON.parse(client.data.line) as { id: string; method: string };
+        const result = method === "ping" ? { version: "fixture", protocol: 22 } : { snapshot: { workspaces: [], panes: [] } };
+        client.end(`${JSON.stringify({ id, result })}\n`);
+      },
+    } });
+    process.env["HERDR_SOCKET"] = unix;
+    try {
+      const pc = await pairingPc({ startRelay: false, server: { token, accountOpensAll: true } });
+      try {
+        expect(await pc.local("/api/health")).toMatchObject({ status: 200, body: { ok: true, auth: { reason: "token_required" } } });
+        expect((await pc.local("/api/account/status")).status).toBe(401);
+        const result = await run("logout", {
+          HOST: "127.0.0.1", PORT: String(pc.app.port), OVIS_STATE_DIR: pc.stateDir, OVIS_TOKEN: token,
+          OVIS_PROFILE: undefined, OVIS_PREVIEW: undefined, OVIS_ACCOUNT_OPENS_ALL: "1", BUN_CONFIG_VERBOSE_FETCH: "curl",
+        }, { timeout: 5_000 });
+        expect(result.out).not.toContain(token);
+        expect(result.err).not.toContain(token);
+        expect(result.exitCode, result.out + result.err).toBe(0);
+        expect(result.out).toContain("This PC is in no Ovis account.");
+      } finally { await pc.close(); }
+    } finally {
+      herdr.stop(true);
+      if (herdrSocket === undefined) delete process.env["HERDR_SOCKET"];
+      else process.env["HERDR_SOCKET"] = herdrSocket;
+    }
+  });
+}
+
 describe("the devices status lists apart", () => {
   const GROUPS = { unlinked: [{ id: "6a1f0c9e2b7d4a10", label: "Old phone" }], own_word: [{ id: "0d4c1b7a9e2f3c58", label: "Tab\u001b]0;let\u0007let" }, { id: "1e5d2c8b0a3f4d69", label: "Laptop" }] };
   /** An Ovis on a port of its own whose health answer is `answer` for each request, by the request's authorization. */
@@ -926,7 +965,7 @@ describe("the devices status lists apart", () => {
       const said = JSON.parse(result.out) as Record<string, unknown>;
       expect({ ...said, version: typeof said["version"] }).toEqual({
         version: "string", running: true, server_id: serverId, relay: { on: true, connected: false, phase: "connecting" },
-        account: null, account_known: true, waiting_for_add: true,
+        account: null, account_known: true, waiting_for_add: true, list: null, problem: null,
       });
       expect(result.out).not.toContain("the-token");
     } finally { await server.stop(true); }
@@ -934,7 +973,37 @@ describe("the devices status lists apart", () => {
     const down = await run("status", { HOST: "127.0.0.1", PORT: "1", OVIS_STATE_DIR: join(scratch, "app-state") }, { args: ["--json"] });
     expect(down.exitCode).toBe(0);
     const said = JSON.parse(down.out) as Record<string, unknown>;
-    expect({ ...said, version: typeof said["version"] }).toEqual({ version: "string", running: false, server_id: null, relay: null, account: null, account_known: false, waiting_for_add: null });
+    expect({ ...said, version: typeof said["version"] }).toEqual({ version: "string", running: false, server_id: null, relay: null, account: null, account_known: false, waiting_for_add: null, list: null, problem: null });
+  });
+
+  it("--json says of a PC pinned to its account's list which list it is, where the PC stands in it and why it lets nobody in; and of a PC that cannot read its account state, what it cannot read", async () => {
+    const reason = "This PC cannot read its copy of your account's list (account-list.json), so it lets no device of your account in.";
+    let strict = false;
+    const answers: { status: () => Response } = { status: () => Response.json({ account: "acct_1a2b3c4d5e6f", members: 1, waiting_for_add: false, list: { pinned_list: "ab".repeat(32), standing: null, reason } }) };
+    const server = serveOffRealPorts({ hostname: "127.0.0.1", port: 0, fetch(request) {
+      const path = new URL(request.url).pathname;
+      // a PC that is closed tells this command, as any caller, no owner's fields: only that it is closed
+      if (path === "/api/health") return Response.json(strict ? { ...APP_HEALTH, auth: { required: true, authenticated: false, reason: "strict" }, relay: { phase: "online" } }
+        : { ...APP_HEALTH, account_devices: { unlinked: [], own_word: [] }, relay: { phase: "online" } });
+      if (path === "/api/account/status") return answers.status();
+      return new Response(null, { status: 404 });
+    } });
+    writeFileSync(join(configDir, ".env"), `PORT=${server.port}\n`);
+    const env = { HOST: "127.0.0.1", HERDR_PLUGIN_CONFIG_DIR: configDir, OVIS_STATE_DIR: join(scratch, "app-state"), OVIS_TOKEN: "" };
+    try {
+      const pinned = JSON.parse((await run("status", env, { args: ["--json"] })).out) as Record<string, unknown>;
+      expect(pinned).toMatchObject({ account: "acct_1a2b3c4d5e6f", account_known: true, list: { pinned_list: "ab".repeat(32), standing: null, reason }, problem: null });
+      expect("migrate_time_scale" in pinned).toBe(false);
+      // a staging run that turned the waits of a move onto the list down says so
+      answers.status = () => Response.json({ account: "acct_1a2b3c4d5e6f", members: 1, waiting_for_add: false, migrate_time_scale: 60 });
+      expect(JSON.parse((await run("status", env, { args: ["--json"] })).out)).toMatchObject({ migrate_time_scale: 60 });
+      // closed altogether: the PC says what it cannot read, and nothing else of its account
+      const why = "This PC is pinned to a signed list in /home/me/.herdr, and /home/me/.herdr/account-list-keys.json could not be brought beside it (ENOENT)";
+      strict = true;
+      answers.status = () => Response.json({ error: { code: "strict", message: "This PC cannot read its safety log", reason: why } }, { status: 403 });
+      const closed = JSON.parse((await run("status", env, { args: ["--json"] })).out) as Record<string, unknown>;
+      expect(closed).toMatchObject({ account: null, account_known: false, list: null, problem: why });
+    } finally { await server.stop(true); }
   });
 
   it("are the two groups of the owner's health answer, each device by its name with no control character, and its id", async () => {
