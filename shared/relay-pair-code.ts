@@ -87,8 +87,9 @@ export function formatPairCode(code: string): string {
  * Backspace stays.
  */
 export function typedPairCode(input: string, deleting: boolean): string {
-  const text = input.toUpperCase().replace(/[\s-]/g, "");
-  return text.length > 5 || (text.length === 5 && (!deleting || input.endsWith("-"))) ? formatPairCode(text) : text;
+  const chars = [...input.toUpperCase().replace(/[\s-]/g, "")];
+  if (chars.length > 5 || (chars.length === 5 && (!deleting || input.endsWith("-")))) chars.splice(5, 0, "-");
+  return chars.length === 0 ? input : chars.join("");
 }
 
 export function randomPairCode(random: (bytes: number) => Uint8Array = (n) => crypto.getRandomValues(new Uint8Array(n))): string {

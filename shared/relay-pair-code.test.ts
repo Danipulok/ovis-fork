@@ -76,6 +76,7 @@ describe("the code", () => {
     // anything else stays, so the field shows what the lookup refuses
     expect(typedPairCode("ab3de.fghjk", false)).toBe("AB3DE-.FGHJK");
     expect(typedPairCode("АВ3DE", false)).toBe("АВ3DE-");
+    expect(typedPairCode("  -  ", false)).toBe("  -  ");
     // the dash just deleted stays deleted; one more Backspace takes the fifth character
     expect(typedPairCode("AB3DE", true)).toBe("AB3DE");
     expect(typedPairCode("AB3D", true)).toBe("AB3D");
@@ -88,6 +89,14 @@ describe("the code", () => {
       const code = randomPairCode();
       expect(normalizePairCode(code)).toBe(code);
     }
+  });
+
+  test.each([
+    ["AB3D𠮷", "AB3D𠮷-"],
+    ["ABCD😀", "ABCD😀-"],
+    ["ABC😀", "ABC😀"],
+  ])("places the dash on a code point boundary in %s", (input, expected) => {
+    expect(typedPairCode(input, false)).toBe(expected);
   });
 });
 

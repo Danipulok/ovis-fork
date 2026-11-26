@@ -1,16 +1,35 @@
 import { describe, expect, test } from "bun:test";
-import type { CompositionEvent, FormEvent } from "react";
+import type { CompositionEvent, InputEvent } from "react";
 
 import { endPairCodeComposition, typePairCode } from "./pairCodeInput.ts";
 
+const fieldAt = (value: string, caret: number) => {
+  const field = {
+    value, selectionStart: caret, selectionEnd: caret, maxLength: 32,
+    setSelectionRange(start: number, end: number) {
+      this.selectionStart = start;
+      this.selectionEnd = end;
+    },
+    ownerDocument: {
+      execCommand(command: string, _showUI: boolean, text: string): boolean {
+        if (command !== "insertText") return false;
+        const { value, selectionStart, selectionEnd } = field;
+        field.value = value.slice(0, selectionStart) + text + value.slice(selectionEnd);
+        return true;
+      },
+    },
+  };
+  return field;
+};
+
 const typed = (value: string, { caret = value.length, inputType = "insertText", isComposing = false } = {}): string => {
-  const field = { value, selectionStart: caret };
-  typePairCode({ currentTarget: field, nativeEvent: { inputType, isComposing } } as unknown as FormEvent<HTMLInputElement>);
+  const field = fieldAt(value, caret);
+  typePairCode({ currentTarget: field, nativeEvent: { inputType, isComposing } } as unknown as InputEvent<HTMLInputElement>);
   return field.value;
 };
 
 const composed = (value: string, caret = value.length): string => {
-  const field = { value, selectionStart: caret };
+  const field = fieldAt(value, caret);
   endPairCodeComposition({ currentTarget: field } as unknown as CompositionEvent<HTMLInputElement>);
   return field.value;
 };
@@ -31,6 +50,10 @@ describe("typePairCode", () => {
 
   test("leaves the field alone while a keyboard composes a word", () => {
     expect(typed("ab3de", { isComposing: true })).toBe("ab3de");
+  });
+
+  test.each(["historyUndo", "historyRedo"])("leaves the value restored by %s alone", (inputType) => {
+    expect(typed("ab3de", { inputType })).toBe("ab3de");
   });
 });
 
