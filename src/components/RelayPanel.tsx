@@ -420,7 +420,8 @@ export function CompactRelay({ qr, qrExpires, failure, reset, onMinted }: { qr: 
     const timer = window.setTimeout(() => void mint(), ms);
     return () => window.clearTimeout(timer);
   }, [code, deadline]);
-  const serverId = (qr === null ? undefined : decodeOffer(qr)?.server_id) ?? code?.server_id ?? null;
+  // Refresh can return a new code while the QR still carries the previous identity.
+  const serverId = code?.server_id ?? (qr === null ? undefined : decodeOffer(qr)?.server_id) ?? null;
   return (
     <div className="relay-pairing-compact" role="status">
       <CompactPair qr={qr} qrLabel={t("QR code that pairs a phone through the relay")} code={code?.code ?? null} codeLabel={t("Code to type")} busy={busy} onRefresh={() => void mint()} />
