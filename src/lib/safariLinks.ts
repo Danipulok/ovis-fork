@@ -1,7 +1,7 @@
 /**
  * The iPhone and iPad Home Screen web app opens a link to another site in a view of its own, where
  * the user is signed in nowhere. Safari's own scheme, `x-safari-https:`, hands the address to Safari
- * instead; Apple does not document it.
+ * instead on iOS and iPadOS 17 and later; Apple does not document it.
  * https://christiantietze.de/posts/2023/05/safari-for-mac-url-scheme/
  */
 import { inNativeApp, onIos } from "./nativeApp.ts";
@@ -24,13 +24,19 @@ function linkEnvironment(): LinkEnvironment {
   };
 }
 
-function inIosHomeScreenApp(env: LinkEnvironment): boolean {
-  return onIos(env) && env.standalone === true && !inNativeApp();
+function inSupportedIosHomeScreenApp(env: LinkEnvironment): boolean {
+  if (!onIos(env) || env.standalone !== true || inNativeApp()) return false;
+
+  const { userAgent } = env;
+  const osMajor = /\bCPU (?:iPhone )?OS (\d+)(?:_\d+)*\b/.exec(userAgent)?.[1];
+  // iPad's desktop-style UA reports a Mac OS version; Safari's Version token is the useful one.
+  const major = osMajor ?? (/Macintosh/.test(userAgent) ? /\bVersion\/(\d+)\.\d+\b/.exec(userAgent)?.[1] : undefined);
+  return major !== undefined && Number(major) >= 17;
 }
 
-/** The address a link opens: Safari's scheme for another site's https address in the iOS Home Screen app, else the address itself. */
+/** The address a link opens: Safari's scheme for another site's https address in a supported iOS Home Screen app, else the address itself. */
 export function safariAddress(uri: string, env: LinkEnvironment = linkEnvironment()): string {
-  if (!inIosHomeScreenApp(env) || !/^https:\/\//i.test(uri)) return uri;
+  if (!inSupportedIosHomeScreenApp(env) || !/^https:\/\//i.test(uri)) return uri;
 
   let url: URL;
   try {

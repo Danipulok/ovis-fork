@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { ExternalLink } from "./externalLink.ts";
 import { safariAddress, type LinkEnvironment } from "./safariLinks.ts";
 
-const IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 26_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148";
-const IPAD = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.1 Safari/605.1.15";
+const IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148";
+const IPAD = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15";
 const homeScreen: LinkEnvironment = { userAgent: IPHONE, maxTouchPoints: 5, standalone: true, origin: "https://ovis.example.com" };
 
 describe("safariAddress", () => {
@@ -53,6 +53,14 @@ describe("a tap on a link in the Home Screen app", () => {
   it("opens another site in Safari instead of the app's own view", () => {
     expect(tap("https://gitlab.com/")).toEqual({ prevented: true, clicked: ["x-safari-https://gitlab.com/"] });
     expect(tap("//gitlab.com/issues/7")).toEqual({ prevented: true, clicked: ["x-safari-https://gitlab.com/issues/7"] });
+  });
+
+  it.each([
+    ["iOS 16", IPHONE.replace("17_0", "16_7")],
+    ["iPadOS 16", IPAD.replace("Version/17.0", "Version/16.7")],
+    ["iPadOS with no version", IPAD.replace(" Version/17.0", "")],
+  ])("leaves normal HTTPS navigation alone on %s", (_, userAgent) => {
+    expect(tap("https://gitlab.com/", {}, { ...homeScreen, userAgent })).toEqual({ prevented: false, clicked: [] });
   });
 
   it("leaves the app's own links, a click a handler took and a modified click alone", () => {

@@ -166,27 +166,33 @@ describe("openWebLink", () => {
     }
   });
 
-  it("hands a terminal or chat link to Safari in the iPhone Home Screen app, even with tab reuse on", () => {
+  it.each([
+    ["iOS 26", "Mozilla/5.0 (iPhone; CPU iPhone OS 26_1 like Mac OS X)", true],
+    ["iOS 16", "Mozilla/5.0 (iPhone; CPU iPhone OS 16_7 like Mac OS X)", false],
+    ["iOS with no version", "Mozilla/5.0 (iPhone) AppleWebKit/605.1.15 Mobile/15E148", false],
+  ])("opens a terminal or chat link with tab reuse on in the %s Home Screen app", (_, userAgent, handOff) => {
     const clicked: string[] = [];
     const opened: string[] = [];
     const saved = ["document", "window", "navigator", "location"].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
     const values: Record<string, unknown> = {
       document: { createElement: () => { const link = { href: "", target: "", rel: "", click: () => clicked.push(link.href) }; return link; } },
       window: { open: (uri: string) => { opened.push(uri); return null; } },
-      navigator: { userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 26_1 like Mac OS X)", maxTouchPoints: 5, standalone: true },
+      navigator: { userAgent, maxTouchPoints: 5, standalone: true },
       location: { origin: "https://ovis.example.com" },
     };
     for (const [key] of saved) Object.defineProperty(globalThis, key, { configurable: true, value: values[key] });
     try {
-      createWebLinkOpener()("https://gitlab.com/issues/7", true);
-      createWebLinkOpener()("https://ovis.example.com/x", false);
+      openExternal("https://gitlab.com/issues/7", "link", true);
+      openExternal("https://ovis.example.com/x", "link");
     } finally {
       for (const [key, descriptor] of saved) {
         if (descriptor) Object.defineProperty(globalThis, key, descriptor);
         else Reflect.deleteProperty(globalThis, key);
       }
     }
-    expect({ clicked, opened }).toEqual({ clicked: ["x-safari-https://gitlab.com/issues/7", "https://ovis.example.com/x"], opened: [] });
+    expect({ clicked, opened }).toEqual(handOff
+      ? { clicked: ["x-safari-https://gitlab.com/issues/7", "https://ovis.example.com/x"], opened: [] }
+      : { clicked: ["https://gitlab.com/issues/7", "https://ovis.example.com/x"], opened: ["https://gitlab.com/issues/7"] });
   });
 });
 
