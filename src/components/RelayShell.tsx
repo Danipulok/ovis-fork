@@ -17,7 +17,7 @@ import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
 import { SHEET_QUERY, useSheetSwipe } from "../lib/sheets.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
-import { useOffline } from "../lib/useOffline.ts";
+import { checkNetwork, useOffline } from "../lib/useOffline.ts";
 import { AccountJoinRequests } from "./AccountJoinRequests.tsx";
 import { AccountSignIn } from "./AccountPcs.tsx";
 import { AddPcSheet } from "./AddPcSheet.tsx";
@@ -245,7 +245,7 @@ export function RelayShell(props: RelayShellProps) {
     if (wasOffline.current && !offline) readAgain.current();
     wasOffline.current = offline;
   }, [offline]);
-  const noneOnline = offline ? <OfflineLine onRetry={() => readAgain.current()} /> : checkAgain ? <NoPcOnline onCheck={checkAgain} /> : null;
+  const noneOnline = offline ? <OfflineLine onRetry={() => { readAgain.current(); void checkNetwork({ fresh: true }); }} /> : checkAgain ? <NoPcOnline onCheck={checkAgain} /> : null;
   // a pairing's sign-in reads on the plain page, with nothing around it; its other steps are on the step frame
   const plain = state.kind === "failed" && state.failure === "sign-in-first" && onSignIn !== undefined;
 
@@ -382,12 +382,13 @@ export function RelayShell(props: RelayShellProps) {
     : state.kind === "failed" ? state.server_id === sheetJoin.server_id && state.failure !== "identity-changed"
     : state.kind === "connecting" || state.kind === "compare" || state.kind === "ready");
   if (continued) {
-    // #16: the join a sign-in's launch asked by itself waits on one plain screen, and ends on one too (declined, removed,
-    // the PC off: Ask again or Check again asks once more); any other failure, or a number to type here, keeps the sheet
+    // #16: the join a sign-in's launch asked by itself waits on one plain screen, and ends on one too (declined, refused,
+    // removed, the PC off: Ask again or Check again asks once more); any other failure, or a number to type here, keeps the sheet
     const launched: { readonly reason: PlainReason; readonly digits?: string; readonly ask?: () => void; readonly check?: () => void } | null = props.launchJoin !== true ? null
       : state.kind === "confirm" || state.kind === "connecting" ? { reason: "allow" }
       : state.kind === "compare" && state.typed !== true ? { reason: state.approveOn === undefined ? "type" : "allow", digits: state.digits }
-      : state.kind === "failed" && (state.failure === "pair-declined" || state.failure === "pair-unavailable") ? { reason: "declined", ask: onRetry }
+      : state.kind === "failed" && state.failure === "pair-declined" ? { reason: "declined", ask: onRetry }
+      : state.kind === "failed" && state.failure === "pair-unavailable" ? { reason: "refused", ask: onRetry }
       : state.kind === "failed" && state.failure === "pair-unanswered" ? { reason: "unanswered", ask: onRetry }
       : state.kind === "failed" && state.failure === "revoked" ? { reason: "removed", ask: onRetry }
       : state.kind === "failed" && state.failure === "pc-offline" ? { reason: "off", check: onRetry }

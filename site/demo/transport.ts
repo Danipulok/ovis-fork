@@ -1341,10 +1341,6 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   if (path === "/api/cliproxy/login" || path === "/api/cliproxy/callback") return error("demo", "Sign in from an installed server, not the public demo.", 409);
   if (path === "/api/push" || path.startsWith("/api/push/")) return pushRoute(path, method, init);
   if (path === "/api/alerts/webhook" || path === "/api/alerts/webhook/test") return alertWebhookRoute(path, method, init);
-  // no pane of the demo asks for the agent tool: nothing waits and nothing is allowed
-  if (path === "/api/agent-tools/panes") return json({ pending: [], allowed: [] });
-  if (path === "/api/agent-tools/panes/answer") return error("pane_card_gone", "This pane closed or was already answered.", 409);
-  if (path === "/api/agent-tools/panes/remove") return error("pane_gone", "This pane is no longer allowed.", 409);
   if (path === "/api/memory" || path.startsWith("/api/memory/")) return memoryRoute(path, method, init);
   if (path === "/api/machines/settings") return json({ auto_update_bridges: true });
   if (path.startsWith("/api/machines/")) return error("demo", "remote PCs need a real machine", 404);
@@ -2693,7 +2689,7 @@ class DemoSocket extends EventTarget {
     const pane = paneOf(paneId);
     if (!pane || pane.agent || chats.has(paneId) || this.mode === "observe") return;
     let history = histories.get(paneId);
-    // xterm sends SGR wheel reports once demo history has enabled mouse reporting.
+    // The terminal sends SGR wheel reports once demo history has enabled mouse reporting.
     text = text.replace(/\x1b\[<(\d+);\d+;\d+[Mm]/g, (_report, value: string) => {
       const button = Number(value);
       if (history && (button & 64) !== 0) history.setOffset(history.offset + ((button & 1) === 0 ? 3 : -3));
