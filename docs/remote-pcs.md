@@ -71,7 +71,7 @@ An initial connection can be cancelled while waiting; already-started work stays
 
 In **Add a connection → Tailscale**, **Connect** opens SSH setup with the PC's address filled in, whether or not either PC is in an account. The relay one-tap API uses a code and is separate from this tab. For a PC in an account, use **Ovis relay → Add from account** to connect through the relay.
 
-PCs already added through the relay keep working. Clients that support pairing links or typed codes can still use them between unbound PCs: both PCs only connect out to the [Ovis relay](relay.md). On the other PC, open
+PCs already added through the relay keep working. Clients that support pairing links or typed codes can still use them between unbound PCs: both PCs only connect out to the relay that holds the code (the [Ovis relay](relay.md), or a relay of that PC's own beside an app of its own). On the other PC, open
 **Settings → Devices and PCs → Connect** (with the relay on) and type the ten-character code it shows
 beside its QR code here (its pairing link works too):
 this PC's server finds that PC through the relay as a phone does ([Pairing with a typed code](relay.md)),

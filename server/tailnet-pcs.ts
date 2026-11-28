@@ -23,15 +23,20 @@ const PHONE_OS = new Set(["ios", "android"]);
 /** a health or code answer is a few hundred bytes; anything past this is not one */
 const MAX_BODY_BYTES = 64 * 1024;
 const OVIS_RELAYS: readonly string[] = [GLOBAL_RELAY, ...Object.values(REGIONAL_RELAYS)];
+/** a relay's host name that does not resolve in this long is not looked at */
+const RESOLVE_MS = 5000;
 
 /**
  * Addresses a relay another PC names may not lead to: a relay a phone meets that PC on is a public one, so this PC's
- * own loopback, the LAN, the tailnet, link-local (a cloud's metadata service lives there), unspecified, multicast and
- * reserved addresses are refused. BlockList matches an IPv4-mapped IPv6 address against the IPv4 rules itself.
+ * own loopback, the LAN, the tailnet, link-local (a cloud's metadata service lives there), unspecified, multicast,
+ * special-use (192.0.0.0/24, the 198.18.0.0/15 benchmark range, site-local fec0::/10) and reserved addresses are
+ * refused, and so is the IPv4-compatible ::/96 (::1 and :: in it). BlockList matches an IPv4-mapped IPv6 address
+ * against the IPv4 rules itself. A host name is resolved here and again when the relay is dialled; only a PC of this
+ * PC's own login that lets it drive names one, so a name that changes its answer in between is not guarded against.
  */
 const INTERNAL = new BlockList();
-for (const [network, prefix] of [["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127.0.0.0", 8], ["169.254.0.0", 16], ["172.16.0.0", 12], ["192.168.0.0", 16], ["224.0.0.0", 3]] as const) INTERNAL.addSubnet(network, prefix, "ipv4");
-for (const [network, prefix] of [["::", 127], ["fc00::", 7], ["fe80::", 10], ["ff00::", 8]] as const) INTERNAL.addSubnet(network, prefix, "ipv6");
+for (const [network, prefix] of [["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127.0.0.0", 8], ["169.254.0.0", 16], ["172.16.0.0", 12], ["192.0.0.0", 24], ["192.168.0.0", 16], ["198.18.0.0", 15], ["224.0.0.0", 3]] as const) INTERNAL.addSubnet(network, prefix, "ipv4");
+for (const [network, prefix] of [["::", 96], ["fc00::", 7], ["fe80::", 10], ["fec0::", 10], ["ff00::", 8]] as const) INTERNAL.addSubnet(network, prefix, "ipv6");
 
 const resolveHost = async (host: string): Promise<string[]> => (await lookup(host, { all: true })).map((entry) => entry.address);
 
@@ -41,6 +46,8 @@ export interface TailnetPcsOptions {
   origin?: (dnsName: string, port: number) => string;
   /** the addresses a relay's host name resolves to */
   resolveHost?: (host: string) => Promise<string[]>;
+  /** how long a relay's host name may take to resolve */
+  resolveMs?: number;
 }
 
 export interface TailnetPc {
@@ -117,12 +124,14 @@ export class TailnetPcs {
   private readonly ports: readonly number[];
   private readonly origin: (dnsName: string, port: number) => string;
   private readonly resolveHost: (host: string) => Promise<string[]>;
+  private readonly resolveMs: number;
 
   constructor(options: TailnetPcsOptions = {}) {
     this.readStatus = options.readStatus ?? readTailscaleStatus;
     this.ports = options.ports ?? HTTPS_PORTS;
     this.origin = options.origin ?? httpsOrigin;
     this.resolveHost = options.resolveHost ?? resolveHost;
+    this.resolveMs = options.resolveMs ?? RESOLVE_MS;
   }
 
   /** one of Ovis's relays, or a wss origin whose host is and resolves only to public addresses */
@@ -130,7 +139,9 @@ export class TailnetPcs {
     if (OVIS_RELAYS.includes(relay)) return true;
     const host = new URL(relay).hostname.replace(/^\[|\]$/g, "");
     let addresses: string[];
-    try { addresses = isIP(host) !== 0 ? [host] : await this.resolveHost(host); } catch { return false; }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error("resolve timed out")), this.resolveMs); });
+    try { addresses = isIP(host) !== 0 ? [host] : await Promise.race([this.resolveHost(host), late]); } catch { return false; } finally { clearTimeout(timer); }
     return addresses.length > 0 && addresses.every((address) => {
       const family = isIP(address);
       return family !== 0 && !INTERNAL.check(address, family === 4 ? "ipv4" : "ipv6");

@@ -281,7 +281,7 @@ it("lists an Ovis whose relay is off, which may be a current one, over an older 
 
 async function codeOf(code: object, resolveHost?: (host: string) => Promise<string[]>) {
   const pc = olderOvis({ serverId: "a".repeat(32), code: { code: "7-ABCD-EFGH", ...code } });
-  const pcs = new TailnetPcs({ readStatus: onePeer, ports: [443], origin: () => pc.url, ...(resolveHost ? { resolveHost } : {}) });
+  const pcs = new TailnetPcs({ readStatus: onePeer, ports: [443], origin: () => pc.url, resolveMs: 50, ...(resolveHost ? { resolveHost } : {}) });
   await pcs.list();
   return await pcs.code(pc.url, new Set()).catch((error: unknown) => error);
 }
@@ -295,12 +295,20 @@ it("refuses a code beside another relay ID than the one that PC's health named",
 it("looks a code up only on one of Ovis's relays or a relay at a public address", async () => {
   const resolved: string[] = [];
   const dns: Record<string, string[]> = { "relay.own.test": ["203.0.113.7", "2001:db8::7"], "inside.test": ["203.0.113.7", "10.0.0.5"], "loop.test": ["127.0.0.1"], "mapped.test": ["::ffff:127.0.0.1"] };
-  const resolveHost = async (host: string) => { resolved.push(host); const found = dns[host]; if (!found) throw new Error("ENOTFOUND"); return found; };
+  const resolveHost = async (host: string) => {
+    resolved.push(host);
+    // a resolver that never answers
+    if (host === "stalled.test") return await new Promise<string[]>(() => {});
+    const found = dns[host];
+    if (!found) throw new Error("ENOTFOUND");
+    return found;
+  };
   expect(await codeOf({ server_id: "a".repeat(32), relay: GLOBAL_RELAY }, resolveHost)).toEqual({ code: "7-ABCD-EFGH", server_id: "a".repeat(32), relay: GLOBAL_RELAY });
   expect(resolved).toEqual([]);
   expect(await codeOf({ server_id: "a".repeat(32), relay: "wss://relay.own.test:8443" }, resolveHost)).toEqual({ code: "7-ABCD-EFGH", server_id: "a".repeat(32), relay: "wss://relay.own.test:8443" });
   for (const relay of ["wss://127.0.0.1:8443", "wss://10.0.0.5", "wss://192.168.1.2", "wss://169.254.169.254", "wss://100.100.100.100", "wss://[::1]", "wss://[fe80::1]", "wss://[fd7a:115c:a1e0::1]",
-    "wss://[::ffff:7f00:1]", "wss://inside.test", "wss://loop.test", "wss://mapped.test", "wss://nowhere.test"]) {
+    "wss://[::ffff:7f00:1]", "wss://[::7f00:1]", "wss://192.0.0.1", "wss://198.18.0.1", "wss://[fec0::1]",
+    "wss://inside.test", "wss://loop.test", "wss://mapped.test", "wss://nowhere.test", "wss://stalled.test"]) {
     const failure = await codeOf({ server_id: "a".repeat(32), relay }, resolveHost);
     expect([relay, (failure as TailnetPcError).failure]).toEqual([relay, "code_unavailable"]);
   }
