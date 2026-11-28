@@ -73,7 +73,7 @@ async function pcB(login: string, options: { codeServerId?: string; mode?: PcAdd
   // on a relay of its own beside an app of its own, it holds its codes on that relay
   const service = options.ownRelay
     ? new RelayService({ stateDir: bState, relay: OWN_RELAY, app: "https://app.own.test", connect: local })
-    : new RelayService({ stateDir: bState, relay: `wss://127.0.0.1:${relay.port}`, connect: local, pairCodeRelay: `wss://127.0.0.1:${relay.port}` });
+    : new RelayService({ stateDir: bState, relay: `wss://127.0.0.1:${relay.port}`, connect: local, pairCodeRelay: GLOBAL_RELAY });
   const b = createServer({ port: 0, hostname: "127.0.0.1", stateDir: bState, token: "", tailscaleOwner: "me@example.com", sidecar: false, registerBridge: false, relay: service,
     accountOpensAll: options.mode !== undefined && options.mode !== "off", platform: "linux" });
   cleanup.push(async () => { await service.shutdown(); b.stop(); });
@@ -105,7 +105,8 @@ async function pcA(initial: Parameters<typeof status>[0], origins: Record<string
   if (mode === "source-bound") bindTestPc(dir);
   const a = createServer({ port: 0, hostname: "127.0.0.1", stateDir: dir, token: "", tailscaleOwner: null, sidecar: false, registerBridge: false, relayPcSocket: local,
     ...(mode ? { accountOpensAll: mode !== "off", platform: "linux" as const } : {}),
-    tailnetPcs: { readStatus: async () => status(peers), ports: [443], origin: (dnsName) => { probed.push(dnsName); return origins[dnsName] ?? "http://127.0.0.1:9"; } } });
+    tailnetPcs: { readStatus: async () => status(peers), ports: [443], origin: (dnsName) => { probed.push(dnsName); return origins[dnsName] ?? "http://127.0.0.1:9"; },
+      resolveHost: async () => ["203.0.113.7"] } });
   cleanup.push(() => a.stop());
   const base = `http://127.0.0.1:${a.port}`;
   const ask = (method: string, body?: unknown) => fetch(`${base}/api/machines/tailnet`, {
@@ -227,7 +228,7 @@ it("does not list a PC that does not let this PC's login drive it", async () => 
  * A PC whose Ovis predates typed codes (0.4.22 and before), answering as that release does: its health names no
  * relay ID, and it refuses `POST /api/relay/code` as an unknown relay action.
  */
-function olderOvis(options: { serverId?: unknown; phase?: string; refusal?: { status: number; code: string } } = {}) {
+function olderOvis(options: { serverId?: unknown; phase?: string; refusal?: { status: number; code: string }; code?: object } = {}) {
   const asked: string[] = [];
   const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(request) {
     const { pathname } = new URL(request.url);
@@ -235,6 +236,8 @@ function olderOvis(options: { serverId?: unknown; phase?: string; refusal?: { st
     if (pathname === "/api/health") return Response.json({ ok: true, auth: { required: false, authenticated: true, via: "tailscale", role: "drive" },
       relay: { phase: options.phase ?? "online", relay: "wss://relay.example", app: "https://app.ovis.sh", sessions: 0, blocked: null, error: null },
       web_ui: { boot_id: "b", revision: null, ...(options.serverId ? { server_id: options.serverId } : {}) } });
+    // a current Ovis, or one that answers its code request as it likes
+    if (pathname === "/api/relay/code" && options.code !== undefined) return Response.json(options.code);
     const refusal = options.refusal ?? { status: 405, code: "method_not_allowed" };
     return Response.json({ error: { code: refusal.code, message: "Unknown relay action." } }, { status: refusal.status });
   } });
@@ -274,6 +277,33 @@ it("lists an Ovis whose relay is off, which may be a current one, over an older 
   const relayOff = olderOvis({ phase: "off" });
   const pcs = new TailnetPcs({ readStatus: onePeer, ports: [443, 8443], origin: (_dnsName, port) => port === 443 ? older.url : relayOff.url });
   expect(await pcs.list()).toEqual([{ name: "pc-b", url: relayOff.url, relay: "off", outdated: false, server_id: null }]);
+});
+
+async function codeOf(code: object, resolveHost?: (host: string) => Promise<string[]>) {
+  const pc = olderOvis({ serverId: "a".repeat(32), code: { code: "7-ABCD-EFGH", ...code } });
+  const pcs = new TailnetPcs({ readStatus: onePeer, ports: [443], origin: () => pc.url, ...(resolveHost ? { resolveHost } : {}) });
+  await pcs.list();
+  return await pcs.code(pc.url, new Set()).catch((error: unknown) => error);
+}
+
+it("refuses a code beside another relay ID than the one that PC's health named", async () => {
+  const failure = await codeOf({ server_id: "b".repeat(32), relay: "wss://relay.elsewhere.test" }, async () => ["203.0.113.7"]);
+  expect(failure).toBeInstanceOf(TailnetPcError);
+  expect((failure as TailnetPcError).failure).toBe("mismatch");
+});
+
+it("looks a code up only on one of Ovis's relays or a relay at a public address", async () => {
+  const resolved: string[] = [];
+  const dns: Record<string, string[]> = { "relay.own.test": ["203.0.113.7", "2001:db8::7"], "inside.test": ["203.0.113.7", "10.0.0.5"], "loop.test": ["127.0.0.1"], "mapped.test": ["::ffff:127.0.0.1"] };
+  const resolveHost = async (host: string) => { resolved.push(host); const found = dns[host]; if (!found) throw new Error("ENOTFOUND"); return found; };
+  expect(await codeOf({ server_id: "a".repeat(32), relay: GLOBAL_RELAY }, resolveHost)).toEqual({ code: "7-ABCD-EFGH", server_id: "a".repeat(32), relay: GLOBAL_RELAY });
+  expect(resolved).toEqual([]);
+  expect(await codeOf({ server_id: "a".repeat(32), relay: "wss://relay.own.test:8443" }, resolveHost)).toEqual({ code: "7-ABCD-EFGH", server_id: "a".repeat(32), relay: "wss://relay.own.test:8443" });
+  for (const relay of ["wss://127.0.0.1:8443", "wss://10.0.0.5", "wss://192.168.1.2", "wss://169.254.169.254", "wss://100.100.100.100", "wss://[::1]", "wss://[fe80::1]", "wss://[fd7a:115c:a1e0::1]",
+    "wss://[::ffff:7f00:1]", "wss://inside.test", "wss://loop.test", "wss://mapped.test", "wss://nowhere.test"]) {
+    const failure = await codeOf({ server_id: "a".repeat(32), relay }, resolveHost);
+    expect([relay, (failure as TailnetPcError).failure]).toEqual([relay, "code_unavailable"]);
+  }
 });
 
 it("tells each refusal of the code request in its own failure, never with that PC's own words", async () => {

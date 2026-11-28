@@ -89,8 +89,10 @@ the other PCs of this PC's own Tailscale login whose Ovis already lets this PC i
 `tailscale serve`, no token), and **Add PC** adds one through the relay in one tap. This PC reads
 `tailscale status`, asks only online, untagged peers of its own login that do not report iOS or
 Android (the first 32 of them in that list; type a code for one past that), asks the
-chosen PC for its code over Tailscale, and checks that the relay found the same PC (`server_id`)
-before it pairs; on a mismatch nothing is added. A PC whose relay is off shows **Turn the relay on
+chosen PC for its code over Tailscale, and checks that the code names the relay ID that PC's health
+named and that the relay found the same PC (`server_id`) before it pairs; on a mismatch nothing is
+added. A code held on a relay of that PC's own is looked up there only when the relay is one of
+Ovis's or at a public address: a loopback, LAN, Tailscale or link-local relay is refused. A PC whose relay is off shows **Turn the relay on
 on that PC first**. PCs of another login, tagged nodes and iOS or Android devices are never asked, and Tailscale
 alone never adds a PC to your account (`GET` and `POST /api/machines/tailnet`; the `GET` lists a PC
 already added too, with the relay ID it names itself (`server_id`, shown only: the relay tab marks a PC

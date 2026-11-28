@@ -485,15 +485,14 @@ describe("Connect a phone on a phone", () => {
       codeApp = app;
       await mount(<RelayPairing compact />);
       for (let flush = 0; flush < 3; flush += 1) await act(async () => {});
-      const hints = renderer!.root.findAll((node) => node.type === "p" && text(node).startsWith("Type the code in")).map(text);
-      await act(async () => { renderer!.unmount(); });
+      const hints = all("p").map(text).filter((line) => line.startsWith("Type the code in"));
+      await mount(null);
       return hints;
     };
     expect(await hint("https://app.example.test")).toEqual(["Type the code in app.example.test."]);
     expect(await hint("https://app.ovis.sh")).toEqual([]);
     expect(await hint("https://app-ap.ovis.sh")).toEqual([]);
     expect(await hint(undefined)).toEqual([]);
-    renderer = undefined;
   });
 
   it("names the app the code is looked up by under the full panel's code to type", async () => {
@@ -501,15 +500,14 @@ describe("Connect a phone on a phone", () => {
       codeApp = app;
       await mount(<RelayPairing />);
       for (let flush = 0; flush < 3; flush += 1) await act(async () => {});
-      await act(async () => { await button("Show a code to type").props.onClick(); });
+      await act(async () => { button("Show a code to type").click(); });
       for (let flush = 0; flush < 3; flush += 1) await act(async () => {});
-      const hints = renderer!.root.findAll((node) => node.type === "p" && text(node).startsWith("On the other device, open")).map((node) => /^On the other device, open ([^,]+),/.exec(text(node))?.[1]);
-      await act(async () => { renderer!.unmount(); });
+      const hints = all("p").map(text).flatMap((line) => /^On the other device, open ([^,]+),/.exec(line)?.[1] ?? []);
+      await mount(null);
       return hints;
     };
     expect(await hint("https://app.example.test")).toEqual(["app.example.test"]);
     expect(await hint(undefined)).toEqual(["app.ovis.sh"]);
-    renderer = undefined;
   });
 
   it("pairs this phone through the relay in one tap: its own offer opens in this browser", async () => {

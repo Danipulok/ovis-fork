@@ -6,10 +6,14 @@
  * names this PC's login as its owner's (server/access.ts), the access that already drives it. The tailnet
  * itself admits nobody, and no account membership comes from it.
  */
+import { lookup } from "node:dns/promises";
+import { BlockList, isIP } from "node:net";
+
 import { HTTPS_PORTS, tailscaleBinary } from "./tailscale.ts";
 import { SERVER_ID_PATTERN } from "../shared/relay-id.ts";
 import { TargetAccountPcError } from "../shared/relay-channel.ts";
 import { isWssOrigin } from "../shared/relay-offer.ts";
+import { GLOBAL_RELAY, REGIONAL_RELAYS } from "../shared/relay-regions.ts";
 
 const PROBE_MS = 2500;
 /** an address the list found stays addable this long */
@@ -18,11 +22,25 @@ const MAX_PEERS = 32;
 const PHONE_OS = new Set(["ios", "android"]);
 /** a health or code answer is a few hundred bytes; anything past this is not one */
 const MAX_BODY_BYTES = 64 * 1024;
+const OVIS_RELAYS: readonly string[] = [GLOBAL_RELAY, ...Object.values(REGIONAL_RELAYS)];
+
+/**
+ * Addresses a relay another PC names may not lead to: a relay a phone meets that PC on is a public one, so this PC's
+ * own loopback, the LAN, the tailnet, link-local (a cloud's metadata service lives there), unspecified, multicast and
+ * reserved addresses are refused. BlockList matches an IPv4-mapped IPv6 address against the IPv4 rules itself.
+ */
+const INTERNAL = new BlockList();
+for (const [network, prefix] of [["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127.0.0.0", 8], ["169.254.0.0", 16], ["172.16.0.0", 12], ["192.168.0.0", 16], ["224.0.0.0", 3]] as const) INTERNAL.addSubnet(network, prefix, "ipv4");
+for (const [network, prefix] of [["::", 127], ["fc00::", 7], ["fe80::", 10], ["ff00::", 8]] as const) INTERNAL.addSubnet(network, prefix, "ipv6");
+
+const resolveHost = async (host: string): Promise<string[]> => (await lookup(host, { all: true })).map((entry) => entry.address);
 
 export interface TailnetPcsOptions {
   readStatus?: () => Promise<string | null>;
   ports?: readonly number[];
   origin?: (dnsName: string, port: number) => string;
+  /** the addresses a relay's host name resolves to */
+  resolveHost?: (host: string) => Promise<string[]>;
 }
 
 export interface TailnetPc {
@@ -98,11 +116,25 @@ export class TailnetPcs {
   private readonly readStatus: () => Promise<string | null>;
   private readonly ports: readonly number[];
   private readonly origin: (dnsName: string, port: number) => string;
+  private readonly resolveHost: (host: string) => Promise<string[]>;
 
   constructor(options: TailnetPcsOptions = {}) {
     this.readStatus = options.readStatus ?? readTailscaleStatus;
     this.ports = options.ports ?? HTTPS_PORTS;
     this.origin = options.origin ?? httpsOrigin;
+    this.resolveHost = options.resolveHost ?? resolveHost;
+  }
+
+  /** one of Ovis's relays, or a wss origin whose host is and resolves only to public addresses */
+  private async publicRelay(relay: string): Promise<boolean> {
+    if (OVIS_RELAYS.includes(relay)) return true;
+    const host = new URL(relay).hostname.replace(/^\[|\]$/g, "");
+    let addresses: string[];
+    try { addresses = isIP(host) !== 0 ? [host] : await this.resolveHost(host); } catch { return false; }
+    return addresses.length > 0 && addresses.every((address) => {
+      const family = isIP(address);
+      return family !== 0 && !INTERNAL.check(address, family === 4 ? "ipv4" : "ipv6");
+    });
   }
 
   /** this PC's login drives that Ovis as its owner: what `tailscale serve` says, never an open LAN window; herdr there may be stopped */
@@ -177,6 +209,7 @@ export class TailnetPcs {
     if (health.web_ui?.server_id !== undefined && added.has(health.web_ui.server_id)) throw new TailnetPcError("already_added", "That PC is already added.");
     if (health.relay?.phase !== "online") throw new TailnetPcError("relay_off", "Turn the relay on on that PC first, under Add a connection.");
     if (TailnetPcs.outdated(health)) throw new TailnetPcError("outdated", OUTDATED);
+    const id = TailnetPcs.relayId(health);
     let response: Response;
     try {
       response = await fetch(`${url}/api/relay/code`, { method: "POST", headers: { "x-herdr-update": "1", "x-ovis-pc-add": "1" }, signal: AbortSignal.timeout(15_000), redirect: "error" });
@@ -194,8 +227,13 @@ export class TailnetPcs {
       if (refusal === "code_unavailable") throw new TailnetPcError("code_unavailable", "That PC uses its own relay without an app of its own, so it cannot give a code. Add it with its QR code instead.");
       throw new TailnetPcError("no_code", "That PC could not give a code just now. Try again in a moment.");
     }
-    // a PC on a relay of its own holds the code there; one that names none (an older Ovis) holds it on Ovis's
-    return { code: body.code, server_id: body.server_id, ...(typeof body.relay === "string" && isWssOrigin(body.relay) ? { relay: body.relay } : {}) };
+    // the code is that PC's own: the ID beside it is the one its health named to this PC, its owner over Tailscale
+    if (body.server_id !== id) throw new TailnetPcError("mismatch", "That PC answered for a different PC than the one asked. Nothing was added.");
+    // a PC on a relay of its own holds the code there; one that names none (an older Ovis) holds it on Ovis's. This
+    // PC's server dials that relay, so one that leads inside a network is refused
+    if (typeof body.relay !== "string" || !isWssOrigin(body.relay)) return { code: body.code, server_id: body.server_id };
+    if (!await this.publicRelay(body.relay)) throw new TailnetPcError("code_unavailable", "That PC holds its codes on a relay that is not at a public address, so this PC does not look there. Add it with its QR code instead.");
+    return { code: body.code, server_id: body.server_id, relay: body.relay };
   }
 }
 
