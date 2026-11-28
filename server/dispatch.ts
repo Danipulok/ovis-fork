@@ -9,7 +9,7 @@ import { handleIntegrationsRequest } from "./integrations-routes.ts";
 import type { OrderSequence } from "./order-sequence.ts";
 import type { HealthAuth, ObservedIngress, SecuritySummary, SessionSnapshot } from "../shared/protocol.ts";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
-import type { Machine, MachineEvent } from "../shared/machines.ts";
+import type { Machine } from "../shared/machines.ts";
 import { authClient, deviceAuthorizationValue, deviceCookieValue, bearerMatches, handleAuthRequest, isAuthenticated, isSecureRequest, parseCookies, presentedToken, presentedTokenHeld, recordPresentedTokenFailure, requiresAuth, unauthorizedJson } from "./auth.ts";
 import { bindScope, cameThroughProxy, decideAccess, decideMachineAccess, forwardingHeaders, inTailnet, isLoopbackAddress, isServeOwnerRequest, lanExposed, machineForwardingHeaders, observedIngress, ownerAccess } from "./access.ts";
 import { type DeviceStore, handleDeviceRequest, newStreamKey, streamCookie, streamKeys, type DeviceMatch } from "./devices.ts";
@@ -35,6 +35,8 @@ import { type AgentInstaller, INSTALL_PATH, SIGN_IN_PATH } from "./agent-catalog
 import { forgetPageMedia } from "./file-view.ts";
 import { textEditAllowed } from "./file-edit.ts";
 import { handleFileRequest } from "./file-routes.ts";
+import { handleMachineFileRequest } from "./herdr-core/machine-files.ts";
+import { paneContext } from "./pane-context.ts";
 import { BACKGROUND_AGENT_PATH, handleBackgroundAgentRequest } from "./background-agent.ts";
 import { paneGet, ping } from "./herdr/client.ts";
 import { version } from "../package.json";
@@ -60,6 +62,7 @@ import type { lockRoutes } from "./account/lock-routes.ts";
 import { lockBoundary, untilLockFrom, type LockSignal } from "./lock-boundary.ts";
 import { handleAccountRequest } from "./account/routes.ts";
 import type { AccountMailbox } from "./account/mailbox.ts";
+import type { AccountMove } from "./account/account-move.ts";
 import type { AccountHolds } from "./account/holds.ts";
 import type { SafetyLog } from "./account/safety-log.ts";
 import type { CatchUpGate } from "./account/catch-up-gate.ts";
@@ -79,12 +82,11 @@ import { USER_FONTS_PATH } from "../shared/user-fonts.ts";
 import type { UsageAccountList } from "./usage-account-list.ts";
 import { handleVoiceRequest } from "./voice.ts";
 import { handleMemoryRequest } from "./memory/routes.ts";
-import { handleAgentPanesRequest } from "./agent-tools/pane-routes.ts";
 import { BRIDGE_PROTOCOL } from "../shared/machines.ts";
 import { bridgeIdentity } from "./bridge.ts";
 import { discoverHerdrSessions } from "./herdr-discovery.ts";
 import { ACCOUNT_PC_OWNER_ONLY, accountRoster, handleMachineRequest, nonCanonicalPath, slowMachinePath, type EventStreamBudget } from "./machine-api.ts";
-import { agentPaneEvents, machinePairingEvents, remotePairingEvents } from "./machine-pairing-events.ts";
+import { machinePairingEvents, remotePairingEvents } from "./machine-pairing-events.ts";
 import { handleJoinSeen, JOIN_SEEN_PATH, type JoinNotices, type JoinViewer } from "./join-notices.ts";
 import { handleSessionHistoryRequest, handleSessionResumeRequest, SESSION_HISTORY_PATH, SESSION_RESUME_PATH } from "./session-history-routes.ts";
 import type { PiSessionReader } from "./pi-session-metadata.ts";
@@ -117,6 +119,7 @@ export interface RequestServices {
   /** the joins no window of this PC has seen yet (server/join-notices.ts) */
   readonly joins: JoinNotices;
   readonly accountMailbox: AccountMailbox;
+  readonly accountMove: AccountMove | null;
   readonly accountIntroductions: AccountIntroductions;
   readonly accountHolds: AccountHolds;
   /** the account safety log; null while OVIS_ACCOUNT_OPENS_ALL is off */
@@ -145,7 +148,7 @@ export interface RequestServices {
   readonly portalGuards: () => { tokenSet: boolean; serveOnly: boolean };
   readonly shellAgents: ShellAgentLocator;
   readonly agentDetector: AgentDetector;
-  readonly agentOffered: (kind: string) => Promise<boolean>;
+  readonly agentOffered: (kind: string, checkProfile?: boolean) => Promise<boolean>;
   readonly agentInstaller: AgentInstaller;
   readonly openCodeState: OpenCodePromptState;
   readonly approvals: ApprovalHub;
@@ -507,6 +510,10 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     setRequestRoute("owner-refusal");
     return jsonResponse({ error: { code: "owner_only", message: "Add this PC to your account on this PC itself." } }, 403);
   }
+  if (pathname === "/api/account/move" && (!ownWindow || funnel)) {
+    setRequestRoute("owner-refusal");
+    return jsonResponse({ error: { code: "owner_only", message: "Move this PC from its own window." } }, 403);
+  }
   // how this PC follows its account's signed list is for this PC's own window and CLI to read, and only a person at
   // this PC names the list it pins, by its id, by the number it compares with the phone that adds it, or by the line of an invite
   if ((pathname === "/api/account/list" || pathname === "/api/account/list/pin" || pathname === "/api/account/list/add" || pathname.startsWith("/api/account/list/add/")
@@ -569,10 +576,16 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   // so an unauthenticated client cannot hold idle sockets for a minute.
   if (pathname.startsWith("/api/") && authenticated) ctx.timeout(request, 60);
 
-  // the panes' files are on another machine: this disk's would be shown, listed, diffed or written as theirs
+  // the panes' files are on another machine: this disk's would be shown, listed, diffed or written as theirs,
+  // so what is read there is read there (herdr-core/machine-files.ts), and the rest is refused
   if (options.localFiles === false && OTHER_MACHINE_FILES.test(pathname)) {
     setRequestRoute(pathname);
-    return jsonResponse({ error: { code: "unsupported", message: "Files on another machine of herdr-core are not reachable from Ovis yet" } }, 501);
+    const paneCwd = (paneId: string) => paneContext(paneId).then((context) => context.cwd, () => null);
+    try {
+      const served = options.machineFiles ? await handleMachineFileRequest(request, url, pathname, options.machineFiles(), paneCwd) : null;
+      if (served !== null) return served;
+    } catch (error) { return errorResponse(error); }
+    return jsonResponse({ error: { code: "unsupported", message: "Diffs, git, edits and searches of another machine of herdr-core are not reachable from Ovis yet" } }, 501);
   }
 
   if (pathname === "/api/bridge") {
@@ -621,7 +634,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
       const endsWith = deviceId ? (close: () => void) => devices.onRevoke(deviceId, close) : openAccess ? (close: () => void) => devices.endWithGate(close) : portalRecheckMs !== undefined ? (close: () => void) => { const timer = setTimeout(close, portalRecheckMs); return () => clearTimeout(timer); } : undefined;
       // and with a lock, when what let it in is a grant the lock refuses, or with a block of the tailnet node it came from
       const ends = untilRefused === undefined ? endsWith : (close: () => void) => { const stops = [untilRefused(close), endsWith?.(close)]; return () => { for (const stop of stops) stop?.(); }; };
-      const response = await handleMachineRequest(request, machines, ends, preferences, readOnly, herdrSidebar, seen, pairings, ctx.relayBodyBudget, ownerAccess(access), ctx.services.safetyLog !== null, devices, relayPeer !== undefined && devices.isAccountRow(relayPeer.id));
+      const response = await handleMachineRequest(request, machines, ends, preferences, readOnly, herdrSidebar, seen, pairings, ctx.relayBodyBudget, ownerAccess(access), ctx.services.safetyLog !== null, devices, relayPeer !== undefined && devices.isAccountRow(relayPeer.id), ctx.port);
       response.headers.set("cache-control", "no-store");
       if (issuedKey !== null && response.ok) response.headers.append("set-cookie", streamCookie(issuedKey, isSecureRequest(request)));
       return response;
@@ -666,10 +679,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
       if (event.type === "machines") tell(accountRoster(herdrSidebar.get(), event.machines));
     }) : undefined;
     // a device of the account's list hears the joins that wait at this PC over the same socket, when it may let one in
-    const listJoins = localRoster ? (tell: (event: MachineEvent) => void) => {
-      const stops = [remotePairingEvents(ctx)(tell), agentPaneEvents(access)(tell)];
-      return () => { for (const stop of stops) stop(); };
-    } : undefined;
+    const listJoins = localRoster ? remotePairingEvents(ctx) : undefined;
     const presentedKeys = streamKeys(request);
     const issuedKey = useMachineEvents && presentedKeys.length === 0 ? newStreamKey() : null;
     const keys = issuedKey === null ? presentedKeys : [issuedKey];
@@ -772,8 +782,6 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   // a long clip can keep the provider silent past Bun's 10 s idle limit before the first line
   if (pathname === "/api/voice" || pathname.startsWith("/api/voice/")) { ctx.timeout(request, 120); return handleVoiceRequest(request, pathname, voice); }
   // Settings → Memory: every change is a person's on a screen; the bridge token never reaches it (not a bridge path)
-  // the owner's word on panes hc started that asked for the agent tool: his alone, a watching device's never
-  if (pathname === "/api/agent-tools/panes" || pathname.startsWith("/api/agent-tools/panes/")) return handleAgentPanesRequest(request, pathname, ownerAccess(access) && !readOnly);
   if (pathname === "/api/memory" || pathname.startsWith("/api/memory/")) {
     const by = access.level !== "full" ? "unknown" : access.device ? `device:${access.device.id}` : access.via;
     return handleMemoryRequest(request, url, ctx.services.memory, { readOnly, by });
@@ -1031,12 +1039,14 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     }
   }
 
-  const agentsResponse = await handleAgentsRequest(request, pathname, shellAgents, agentOffered);
+  // A PC proxy sends its full token for watchers too, with an opt-out from profile refresh.
+  const checkAgentProfile = !readOnly && url.searchParams.get("profile-recheck") !== "0";
+  const agentsResponse = await handleAgentsRequest(request, pathname, shellAgents, (kind) => agentOffered(kind, checkAgentProfile));
   if (agentsResponse) return agentsResponse;
 
   const installResponse = await agentInstaller.handle(request, pathname);
   if (installResponse) return installResponse;
-  const catalogResponse = await handleAgentCatalogRequest(request, pathname, agentDetector, undefined, readOnly);
+  const catalogResponse = await handleAgentCatalogRequest(request, pathname, agentDetector, undefined, readOnly, checkAgentProfile);
   if (catalogResponse) return catalogResponse;
 
   const integrationsResponse = await handleIntegrationsRequest(request, pathname);
@@ -1055,7 +1065,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   const pluginResponse = await handlePluginRequest(request, url, pathname, options);
   if (pluginResponse) return pluginResponse;
 
-  const paneResponse = await handlePaneRequest(request, url, pathname, options);
+  const paneResponse = await handlePaneRequest(request, url, pathname, { ...options, approvals });
   if (paneResponse) return paneResponse;
 
   const tasksResponse = await handleTasksRequest(request, url, pathname, { omo, claudeAgents, opencodeAgents });
@@ -1103,7 +1113,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
       // (a new one would cancel the turn that person started), and one that cannot take it is named
       let children;
       try { children = await acp.childrenOf(body.pane_id); } catch (error) { return errorResponse(error); }
-      const tried = await Promise.allSettled(children.map(async child => {
+      const tried = await Promise.allSettled(children.ready.map(async child => {
         if (!child.client.connected || !child.client.session) throw new Error("not connected");
         if (child.client.holdGeneration !== null) return { pane_id: child.terminal, child_id: child.id, generation: child.client.holdGeneration };
         return { pane_id: child.terminal, child_id: child.id, generation: await child.client.hold(child.client.session) };
@@ -1111,7 +1121,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
       return jsonResponse({
         ok: true,
         held: tried.flatMap(outcome => outcome.status === "fulfilled" ? [outcome.value] : []),
-        failed: children.filter((_, index) => tried[index]?.status === "rejected").map(child => child.terminal),
+        failed: [...children.opening, ...children.ready.filter((_, index) => tried[index]?.status === "rejected").map(child => child.terminal)],
       });
     }
     const child = acp.forPane(body.pane_id);

@@ -6,12 +6,13 @@ import type { Socket } from "bun";
 import { AGENT_LABELS } from "../agents-routes.ts";
 import { LINE_BYTES } from "../herdr/client.ts";
 import { makeLineReader } from "../herdr/line-reader.ts";
-import { cmdQuote, powershellNativeArgs, SHELL_AGENTS, shellCommandLine } from "../shell-agent.ts";
+import { cmdQuote, plainPosixShell, powershellNativeArgs, SHELL_AGENTS, shellCommandLine } from "../shell-agent.ts";
 import { descendantProcesses, type ProcessRow, windowsProcessTable } from "../windows-processes.ts";
 import { jobProcessesBelow } from "../foreground-job.ts";
+import { PAINT_END } from "./attach-session.ts";
 import { type HcConnection, HcError } from "./connection.ts";
 import { foreignLayout, OVIS_LAYOUT_DOC, type PaneDirection } from "./layout-doc.ts";
-import { paneSession } from "../agent-identity.ts";
+import { isCmdProcess, isHermesInstalledLauncher, paneSession } from "../agent-identity.ts";
 import { AGENT_CATALOG } from "../../shared/agent-catalog.ts";
 import { agentInfoOf, agentOfStatus, agyPlanReview, type CoreHost, coreHost, type FirstTurn, opencodeRecords, type SessionOf, type HcStatus, type HcTerminal, hcKeyName, HERDR_PROTOCOL, isRecord, keyBytes, LAYOUT_DOC, onOtherMachine, OTHER_WORKSPACE_ID, processInfoOf, runsCommandString, SPACE_LABEL, TAB_LABEL, WORKSPACE_NAME_LABEL } from "./snapshot.ts";
 import { type CoreChange, coreModel, type SessionNote } from "./core-model.ts";
@@ -21,6 +22,7 @@ import { layoutCalls, LayoutStore, moveBesideEdit, newLayoutId, ownsLayout, rati
 import { checkoutHolding, defaultCheckoutPath, factsOf, git, gitDirIdentity, labeledWorktree, realPath, type Checkout, type Repository, repositoryOf, type RepositoryReads, WORKTREE_LABEL, WorktreeError, worktreeFolder, worktreeLabel } from "./worktrees.ts";
 import type { SessionSnapshot, WorkspaceWorktreeInfo } from "../../shared/herdr-api.generated.ts";
 import type { WorktreeInfo } from "../herdr/worktree-info.ts";
+import type { HerdrWorkspaceWorktree } from "../../shared/protocol.ts";
 
 /**
  * herdr's socket API, answered from herdr-core. The server talks to herdr through one client
@@ -74,7 +76,7 @@ interface ConnectionState {
 export interface HerdrCoreAdapter {
   /** where it listens: the server's HERDR_SOCKET */
   socketPath: string;
-  stop: () => void;
+  stop: (options?: { drain?: boolean }) => void | Promise<void>;
 }
 
 /**
@@ -103,6 +105,7 @@ export interface AdapterOptions {
 
 /** The sessions a terminal named that it keeps as candidates, the newest last. */
 const NAMED_SESSIONS = 32;
+const LABEL_DRAIN_MS = 500;
 /**
  * A terminal's named OpenCode sessions, space separated, kept on it through a restart of Ovis (docs/herdr-core-layout.md):
  * all of its candidates, about 1 KB at most, since the pane may still show any of them, not only the newest.
@@ -114,13 +117,15 @@ export const OPENCODE_SESSIONS_LABEL = "ovis.opencode";
  * terminal's writes in order. A write that fails is tried again on the next change. Once stopped, a
  * write still queued is dropped rather than open a new line to hc after the server closed it.
  */
-export function sessionLabeler(hc: Pick<HcConnection, "call">): { label: (address: string, kept: string, named: readonly string[]) => void; forget: (address: string) => void; stop: () => void } {
+export function sessionLabeler(hc: Pick<HcConnection, "call">) {
   const written = new Map<string, string>();
   const queue = new Map<string, Promise<void>>();
+  let accepting = true;
   let stopped = false;
+  let draining: Promise<void> | undefined;
   const label = (address: string, kept: string, named: readonly string[]) => {
     const value = named.join(" ");
-    if (stopped || value === (written.get(address) ?? kept)) return;
+    if (!accepting || value === (written.get(address) ?? kept)) return;
     written.set(address, value);
     const run = (queue.get(address) ?? Promise.resolve())
       .then(async () => { if (!stopped) await hc.call("terminal.label", { terminal: address, labels: { [OPENCODE_SESSIONS_LABEL]: value } }); })
@@ -128,7 +133,25 @@ export function sessionLabeler(hc: Pick<HcConnection, "call">): { label: (addres
     queue.set(address, run);
     void run.then(() => { if (queue.get(address) === run) queue.delete(address); });
   };
-  return { label, forget: (address) => written.delete(address), stop: () => { stopped = true; } };
+  const stop: HerdrCoreAdapter["stop"] = (options) => {
+    accepting = false;
+    if (!options?.drain || queue.size === 0) { stopped = true; return; }
+    if (stopped) return;
+    draining ??= (async () => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          Promise.all(queue.values()),
+          new Promise<void>((resolve) => { timer = setTimeout(resolve, LABEL_DRAIN_MS); }),
+        ]);
+      } finally {
+        stopped = true;
+        clearTimeout(timer);
+      }
+    })();
+    return draining;
+  };
+  return { label, forget: (address: string) => written.delete(address), stop };
 }
 
 export async function startHerdrCoreAdapter(hc: HcConnection, socketPath: string, observeSeen?: SeenObserver, options: AdapterOptions = {}): Promise<HerdrCoreAdapter> {
@@ -228,10 +251,10 @@ export async function startHerdrCoreAdapter(hc: HcConnection, socketPath: string
   });
   return {
     socketPath,
-    stop: () => {
-      sessionLabels.stop();
+    stop: (options) => {
       listener.stop(true);
       rmSync(socketPath, { force: true });
+      return sessionLabels.stop(options);
     },
   };
 }
@@ -283,17 +306,13 @@ const cwdOf = (params: Record<string, unknown>): string | undefined => typeof pa
 const envOf = (params: Record<string, unknown>): Record<string, string> | undefined => isRecord(params["env"]) ? Object.fromEntries(Object.entries(params["env"]).filter((entry): entry is [string, string] => typeof entry[1] === "string")) : undefined;
 
 /** An agent whose command is not its kind, as the Herdr app runs it (herdr-app defaults/programs.json): the Cursor IDE is `cursor`. */
-const AGENT_COMMANDS: Readonly<Record<string, string>> = { cursor: "cursor-agent" };
+const AGENT_COMMANDS: Readonly<Record<string, string>> = { cursor: "cursor-agent", kiro: "kiro-cli" };
 
 /**
  * A shell the start line is typed into, as hc reports a terminal started with no program
  * (`/bin/bash`, a login `-zsh`): the POSIX ones, and fish, which reads the same quoting for an
  * agent's name and plain arguments (nu does not).
  */
-const SHELL = /(?:^|\/)-?(?:sh|bash|dash|zsh|ksh|mksh|ash|fish)$/u;
-/** The flags a plain interactive shell may be started with; anything else (`-c`) runs a program in it. */
-const SHELL_FLAGS = new Set(["-l", "--login", "-i"]);
-const plainShell = (argv: readonly string[]): boolean => SHELL.test(argv[0] ?? "") && argv.slice(1).every((arg) => SHELL_FLAGS.has(arg));
 /** The switches that leave PowerShell an interactive shell. */
 const POWERSHELL_SWITCHES = new Set(["-nologo", "-noexit", "-noprofile", "-login"]);
 /** How the `-Command` of hc's own PowerShell begins (a live record, hc 0.1.17): its prompt hook, which keeps the terminal's cwd current. */
@@ -316,7 +335,7 @@ type StartShell = "posix" | "powershell" | "pwsh" | "cmd";
  * there; WSL's bash runs the agent where this PC's process table does not see it.
  */
 function startShellOf(argv: readonly string[], platform: NodeJS.Platform): StartShell | null {
-  if (platform !== "win32") return plainShell(argv) ? "posix" : null;
+  if (platform !== "win32") return plainPosixShell(argv) ? "posix" : null;
   const name = windowsProgram(argv[0] ?? "");
   const args = argv.slice(1);
   // cmd runs what follows a /c, /k or /r, even one run together with another switch (`/q/c`), and
@@ -348,8 +367,6 @@ function startLine(shell: StartShell, command: string, args: readonly string[]):
 /** How long a typed agent start may take to show in front of its shell. */
 const AGENT_START_MS = 10_000;
 
-/** What hc sends right after the screen in a first paint: the win32-input-mode state (herdr-core viewers.rs `first_paint`). */
-const PAINT_END = "\u001b[?9001";
 /** How a first paint begins: hc's CAN, then the soft reset of ghostty-vt `paint`. */
 const PAINT_START = "\u0018\u001b[!p";
 /** How long a watch-only attach may take to bring its first paint: within the 1.5s a prompt poll gives its colored read. */
@@ -596,13 +613,16 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
     await Promise.all([...asked].map(async ([workspace, folder]) => {
       const answer = await answerFor(folder);
       if (!answer) return;
-      workspace.worktree = { ...answer.facts };
       let pin = pinned.get(workspace.workspace_id);
       // the folder drawn is kept from the first draw; a pin a newer read took stands over this older one
       if (!pin || (pin.folder !== folder && pin.at < began)) pinned.set(workspace.workspace_id, pin = { folder, gitId: null, at: Date.now() });
       // its identity only from an answer git gave since: a cached one may be of a checkout no longer there
       if (pin.folder === folder && pin.gitId === null && (checkoutFacts.get(folder)?.until ?? 0) > Date.now()) pin.gitId = answer.gitId;
-      gitIds.set(workspace.workspace_id, pin.folder === folder ? pin.gitId ?? answer.gitId : answer.gitId);
+      const gitId = pin.folder === folder ? pin.gitId ?? answer.gitId : answer.gitId;
+      gitIds.set(workspace.workspace_id, gitId);
+      // the row carries the identity it is drawn with, which a delete it confirms sends back (#4211)
+      const drawn: HerdrWorkspaceWorktree = { ...answer.facts, ...(gitId ? { git_id: gitId } : {}) };
+      workspace.worktree = drawn;
     }));
     return { shown, own, gitIds, started };
   };
@@ -869,12 +889,12 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
     // herdr starts an agent by its kind (its command is its kind) from herdr's own manifests; hc has
     // none, so the kinds Ovis knows are offered, and the start types the command into the pane's
     // shell as a person would. Ovis's own shell-started agents are offered and started by the
-    // server itself (shell-agent.ts), through pane.send_text. On Windows that shell is PowerShell or
-    // cmd (startShellOf), and another machine's terminals, whose programs its table does not show,
-    // are offered no kind; nor is Command Code, whose command `cmd` is cmd.exe there.
+    // server itself (shell-agent.ts), through pane.send_text, except Command Code, which uses
+    // agent.start here so the adapter checks for an idle shell. Its resolved executable is local, and
+    // `cmd` is cmd.exe on Windows; neither Windows nor a machine-scoped adapter offers Command Code.
     async "server.agent_manifests"() {
       if (programsUnseen) return { manifests: [] };
-      const manifests = Object.keys(AGENT_LABELS).filter((agent) => !Object.hasOwn(SHELL_AGENTS, agent) && !(platform === "win32" && agent === "cmd"))
+      const manifests = Object.keys(AGENT_LABELS).filter((agent) => agent === "cmd" ? platform !== "win32" && !options.otherMachine : !Object.hasOwn(SHELL_AGENTS, agent))
         .map((agent) => ({ agent, source: "herdr-core", source_kind: "herdr-core", local_override_shadowing_remote: false }));
       return { manifests };
     },
@@ -907,7 +927,8 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
         const front = ready.foreground;
         const frontArgv = front?.argv ?? (front ? [front.name] : []);
         if ([own[0], frontArgv[0]].some((program) => /(?:^|\/)-?fish$/u.test(program ?? "")) && args.some((arg) => arg.includes("\\"))) throw new AdapterError("invalid_params", "fish would read a backslash in an argument differently");
-        const agentArgs = program === undefined ? args : [];
+        // Command Code's program is the agent itself; the Codex launcher already carries its args.
+        const agentArgs = program === undefined || kind === "cmd" ? args : [];
         const socket = params["ovis_agent_socket"], tokenFile = params["ovis_agent_token_file"];
         const door = socket !== undefined || tokenFile !== undefined;
         if (door && (platform === "win32" || typeof socket !== "string" || typeof tokenFile !== "string" || !isAbsolute(socket) || !isAbsolute(tokenFile)
@@ -932,10 +953,16 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
       let left = false;
       for (;;) {
         // a table that could not be read answers neither way
-        const programs = await running(await terminal(paneId), Math.max(500, deadline - Date.now()));
+        const record = await terminal(paneId);
+        const programs = await running(record, Math.max(500, deadline - Date.now()));
         if (programs?.length) {
           left = true;
-          if (programs.flat().some((part) => part === command || part.startsWith(`${command}-`) || part.startsWith(`${command}.`))) return { type: "agent_started", pane_id: paneId };
+          const installedHermes = kind === "hermes" && platform !== "win32" && isHermesInstalledLauncher(record.foreground?.argv ?? []);
+          const front = record.foreground;
+          const started = kind === "cmd"
+            ? !!front && isCmdProcess(front.argv?.length ? front.argv : [front.name])
+            : installedHermes || programs.flat().some((part) => part === command || part.startsWith(`${command}-`) || part.startsWith(`${command}.`));
+          if (started) return { type: "agent_started", pane_id: paneId };
         } else if (programs && left) throw new AdapterError("agent_start_failed", `${kind} did not start in pane ${paneId}`);
         if (Date.now() > deadline) throw new AdapterError("agent_start_failed", `${kind} did not come up in pane ${paneId}`);
         await Bun.sleep(100);

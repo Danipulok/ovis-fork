@@ -1,28 +1,32 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { writeStateDocument } from "../state-document.ts";
 import { HARNESS_LIMITS } from "../../shared/harness-tool.ts";
 import { readProcessBirth } from "../process-owner.ts";
+import { localPane, procLink, sameKey, type PaneKey, type PaneTerminal } from "./pane-proof.ts";
+import { idPattern, paneRegistry, readPaneRuns, readTokenRuns, type PaneSaved, type Run, type RunState, type Saved } from "./run-state.ts";
 
-export interface Run {
-  readonly id: string;
-  readonly self: string;
-  readonly depth: number;
-  readonly started_by: string | null;
-  readonly root: string;
-  readonly harness: string;
-  readonly created_ms: number;
-  /** Server-verified permission contract, not a harness mode name. Absent for TUI launches. */
-  readonly ceiling?: string;
-}
-interface Saved { readonly run: Run; readonly hash: string; readonly starts?: readonly { key: string; run: string }[]; readonly calls?: readonly number[]; readonly foreground?: { pid: number; birth: string } }
-/** A pane hc started that its owner allowed (pane-grants.ts): no token, proved at every call; in pane-runs.json. */
-type PaneSaved = Omit<Saved, "hash" | "foreground">;
-const idPattern = /^[a-f0-9]{16}$/;
+export type { Run } from "./run-state.ts";
 const digest = (token: string) => createHash("sha256").update(token).digest();
+/**
+ * Whether a Linux process is the one the pane's shell (`shell`, the terminal's own pid) started with this token file in
+ * its environment, as both launch paths set it (`OVIS_AGENT_TOKEN_FILE`). pi, OmO and Claude Code set process.title,
+ * which leaves only their name in /proc/<pid>/cmdline and hides the launch argv; the environment stays. A process the
+ * agent started inherits it too, so only the shell's own child counts. What cannot be read proves nothing.
+ */
+function launchedWith(pid: number | undefined, shell: number | null | undefined, tokenFile: string): boolean {
+  if (process.platform !== "linux" || pid === undefined || !shell) return false;
+  const entry = `OVIS_AGENT_TOKEN_FILE=${tokenFile}`;
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    // pid (comm) state ppid …: comm may hold spaces and parentheses
+    if (Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]) !== shell) return false;
+    return readFileSync(`/proc/${pid}/environ`, "utf8").split("\0").includes(entry);
+  } catch { return false; }
+}
 export interface LiveToolTerminal {
-  address: string; state: string; labels: Record<string, string>;
+  address: string; state: string; labels: Record<string, string>; pid?: number | null;
   foreground?: { pid?: number; argv: readonly string[] } | null;
   parent?: string | null;
 }
@@ -38,21 +42,6 @@ export function writePrivate(path: string, text: string): void {
   writeStateDocument(path, text, false);
 }
 
-function saved(value: unknown): value is Saved {
-  return !!value && typeof value === "object" && "hash" in value && typeof value.hash === "string" && /^[a-f0-9]{64}$/.test(value.hash) && paneSaved(value);
-}
-function paneSaved(value: unknown): value is PaneSaved {
-  if (!value || typeof value !== "object" || !("run" in value)) return false;
-  if ("starts" in value && (!Array.isArray(value.starts) || !value.starts.every(s => s && typeof s.key === "string" && typeof s.run === "string" && idPattern.test(s.run)))) return false;
-  if ("calls" in value && (!Array.isArray(value.calls) || value.calls.length > HARNESS_LIMITS.calls_per_minute || !value.calls.every(Number.isFinite))) return false;
-  const r = value.run;
-  return !!r && typeof r === "object" && "id" in r && typeof r.id === "string" && idPattern.test(r.id)
-    && "root" in r && typeof r.root === "string" && idPattern.test(r.root)
-    && "started_by" in r && (r.started_by === null || typeof r.started_by === "string" && idPattern.test(r.started_by))
-    && "self" in r && typeof r.self === "string" && "depth" in r && typeof r.depth === "number" && Number.isInteger(r.depth) && r.depth >= 0 && r.depth <= 3
-    && "created_ms" in r && typeof r.created_ms === "number" && Number.isFinite(r.created_ms) && "harness" in r && typeof r.harness === "string";
-}
-
 /** Whether the process is known gone: absent, or its pid now another process's. A reading that cannot tell keeps it. */
 function ended(foreground: { pid: number; birth: string }): boolean {
   const reading = readProcessBirth(foreground.pid);
@@ -61,49 +50,62 @@ function ended(foreground: { pid: number; birth: string }): boolean {
 
 export class RunStore {
   private readonly entries = new Map<string, Saved>();
-  private readonly pending = new Map<string, { depth: number; hash: string; ceiling?: string }>();
+  private readonly pending = new Map<string, { depth: number; hash: string }>();
   private readonly panes = new Map<string, PaneSaved>();
-  constructor(readonly dir: string) {
+  constructor(readonly dir: string, private readonly paneRunEpoch: () => string | null = () => null) {
     privateDir(dir);
-    for (const [name, rows, valid] of [["runs.json", this.entries, saved], ["pane-runs.json", this.panes, paneSaved]] as const) {
-      const file = join(dir, name);
-      if (!existsSync(file)) continue;
-      try {
-        const doc: unknown = JSON.parse(readFileSync(file, "utf8"));
-        if (Array.isArray(doc) && doc.every(valid)) for (const row of doc) (rows as Map<string, PaneSaved>).set(row.run.id, row);
-      } catch {
-        console.warn("Agent tool: unreadable run registry; existing credentials will not be accepted.");
-      }
-    }
+    for (const row of readTokenRuns(dir)) this.entries.set(row.run.id, row);
+    for (const row of readPaneRuns(dir, paneRunEpoch())) this.panes.set(row.run.id, row);
   }
   /** Each registry is written alone, so a pane registry that cannot be written never fails a token run, nor the reverse. */
   private save(which: "tokens" | "panes" = "tokens"): void {
-    if (which === "panes") writePrivate(join(this.dir, "pane-runs.json"), JSON.stringify([...this.panes.values()]));
+    if (which === "panes") writePrivate(paneRegistry(this.dir), JSON.stringify([...this.panes.values()]));
     else writePrivate(join(this.dir, "runs.json"), JSON.stringify([...this.entries.values()]));
   }
   private saveFor(id: string): void { this.save(this.panes.has(id) ? "panes" : "tokens"); }
-  private row(id: string): PaneSaved | undefined { return this.entries.get(id) ?? this.panes.get(id); }
-  private put(id: string, row: PaneSaved): void {
-    if (this.panes.has(id)) this.panes.set(id, row); else this.entries.set(id, row as Saved);
+  private row(id: string): RunState | undefined { return this.entries.get(id) ?? this.panes.get(id); }
+  private put(id: string, row: RunState): void {
+    const pane = this.panes.get(id), token = this.entries.get(id);
+    if (pane) this.panes.set(id, { ...pane, ...row });
+    else if (token) this.entries.set(id, { ...token, ...row });
   }
-  /** A depth-zero run for a pane its owner allowed, with no token: the hub proves the pane at every call. */
-  bindPane(self: string): Run {
+  /** Every call is proved by the hub; all callers in the same live pane share one depth-zero run. */
+  bindPane(key: PaneKey): Run {
+    for (const [id, pane] of this.panes) {
+      if (pane.key.pane !== key.pane) continue;
+      if (sameKey(pane.key, key)) return pane.run;
+      this.panes.delete(id);
+    }
     const id = randomBytes(8).toString("hex");
-    const run: Run = { id, self, depth: 0, started_by: null, root: id, harness: "hc-pane", created_ms: Date.now() };
-    this.panes.set(id, { run });
+    const run: Run = { id, self: key.pane, depth: 0, started_by: null, root: id, harness: "hc-pane", created_ms: Date.now() };
+    const epoch = this.paneRunEpoch();
+    this.panes.set(id, { run, key, ...(epoch === null ? {} : { epoch }) });
     try { this.save("panes"); } catch (error) { this.panes.delete(id); throw error; }
     return run;
   }
-  paneRun(id: string): Run | null { return this.panes.get(id)?.run ?? null; }
-  /** Drops the pane runs no allowed pane holds (a stop between writing the run and the owner's word). */
-  keepPaneRuns(held: ReadonlySet<string>): void {
-    const orphans = [...this.panes.keys()].filter(id => !held.has(id));
-    for (const id of orphans) this.panes.delete(id);
-    if (orphans.length > 0) this.save("panes");
+  hasPaneRun(id: string): boolean { return this.panes.has(id); }
+  knownPaneRuns(): ReadonlySet<string> { return new Set(this.panes.keys()); }
+  /** Ignore runs created after the caller asked hc for its snapshot. */
+  reconcilePanes(live: readonly PaneTerminal[], before: ReadonlySet<string>): void {
+    const roots = new Map(live.filter(localPane).map(pane => [pane.address, pane]));
+    let changed = false;
+    for (const [id, { key }] of this.panes) {
+      if (!before.has(id)) continue;
+      const pane = roots.get(key.pane);
+      if (pane?.pid === key.root && pane.created_ms === key.created_ms && procLink(key.root)?.birth === key.birth) continue;
+      this.panes.delete(id);
+      changed = true;
+    }
+    if (changed) this.save("panes");
+  }
+  clearPaneRuns(): void {
+    if (this.panes.size === 0) return;
+    this.panes.clear();
+    this.save("panes");
   }
   /** Whether Ovis launched this pane's program with a token of its own: such a pane is never also a tokenless one. */
   tokenManaged(self: string): boolean { return [...this.entries.values()].some(({ run }) => run.self === self); }
-  reserve(depth = 0, ceiling?: string) {
+  reserve(depth = 0) {
     const id = randomBytes(8).toString("hex");
     const dir = join(this.dir, "tokens");
     privateDir(dir);
@@ -111,7 +113,7 @@ export class RunStore {
     const token = `ovr1.${id}.${randomBytes(32).toString("base64url")}`;
     const hash = digest(token).toString("hex");
     writePrivate(tokenFile, token);
-    this.pending.set(id, { depth, hash, ceiling });
+    this.pending.set(id, { depth, hash });
     return { id, tokenFile, cancel: () => this.revoke(id),
       bind: (claims: Omit<Run, "id" | "created_ms">): Run => {
         if (!this.pending.delete(id)) throw new Error("Agent tool reservation has been revoked.");
@@ -169,14 +171,17 @@ export class RunStore {
   }
   revoke(id: string): void {
     if (!idPattern.test(id)) return;
+    if (this.panes.delete(id)) { this.save("panes"); return; }
     this.pending.delete(id);
     rmSync(join(this.dir, "tokens", `${id}.token`), { force: true });
     for (const end of [".json", ".js"]) rmSync(join(this.dir, "mcp", `${id}${end}`), { force: true });
     if (this.entries.delete(id)) this.save("tokens");
-    else if (this.panes.delete(id)) this.save("panes");
   }
   forgetTerminal(self: string, keep?: string): void {
     for (const { run } of [...this.entries.values(), ...this.panes.values()]) if (run.self === self && run.id !== keep) this.revoke(run.id);
+  }
+  forgetPaneRun(self: string): void {
+    for (const { run } of this.panes.values()) if (run.self === self) this.revoke(run.id);
   }
   rememberForeground(id: string, pid: number): void {
     const row = this.entries.get(id), reading = readProcessBirth(pid);
@@ -189,13 +194,13 @@ export class RunStore {
     const live = new Map(terminals.filter(t => t.state === "live").map(t => [t.address, t]));
     for (const { run, foreground } of this.entries.values()) {
       const t = live.get(run.self);
-      const config = join(this.dir, "mcp", `${run.id}.json`), extension = join(this.dir, "mcp", `${run.id}.js`);
+      const config = join(this.dir, "mcp", `${run.id}.json`), extension = join(this.dir, "mcp", `${run.id}.js`), tokenFile = join(this.dir, "tokens", `${run.id}.token`);
       const argv = t?.foreground?.argv ?? [];
       const id = keeper(run.self);
       const birth = foreground && t?.foreground?.pid === foreground.pid ? readProcessBirth(foreground.pid) : null;
       const verified = run.started_by === null
-        ? birth?.state === "identified" && birth.birth.value === foreground?.birth && argv.some((word, i) => (word === "--mcp-config" && argv[i + 1] === config) || (word === "-e" && argv[i + 1] === extension) || (word === "--additional-mcp-config" && argv[i + 1] === `@${config}`)
-          || (word.startsWith("mcp_servers.ovis-agent.args=") && argv[i - 1] === "-c" && word.includes(`'${join(this.dir, "tokens", `${run.id}.token`)}'`)))
+        ? birth?.state === "identified" && birth.birth.value === foreground?.birth && (launchedWith(foreground?.pid, t?.pid, tokenFile) || argv.some((word, i) => (word === "--mcp-config" && argv[i + 1] === config) || (word === "-e" && argv[i + 1] === extension) || (word === "--additional-mcp-config" && argv[i + 1] === `@${config}`)
+          || (word.startsWith("mcp_servers.ovis-agent.args=") && argv[i - 1] === "-c" && word.includes(`'${tokenFile}'`))))
         : !!id && t?.labels["ovis.acp"] === id && t.labels["ovis.run"] === run.id;
       if (!verified) this.revoke(run.id);
     }

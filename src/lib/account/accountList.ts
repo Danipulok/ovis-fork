@@ -628,14 +628,15 @@ export interface AccountList {
   dropNames(account: string): Promise<void>;
   /**
    * A person's reset, or the device left the account: forgets everything kept for the account. With `member`, only
-   * where the saved copy is pinned to that member key, compared with the very copy that is dropped: a copy that a
-   * member which took this one's place keeps (another tab signed in again) stays, and so does one that does not read.
+   * where the saved copy is pinned to that member key (or to a key it shows handed on to it: a carried device's sign-in
+   * key), compared with the very copy that is dropped: a copy that a member which took this one's place keeps (another
+   * tab signed in again) stays, and so does one that does not read.
    */
   forget(account: string, member?: string): Promise<void>;
   /**
-   * The other account than `account` whose saved copy of its list is pinned to this member key and does not show it
-   * out (that account's list still holds this device by it), or null for none. A copy that does not read counts as
-   * holding it.
+   * The other account than `account` whose saved copy of its list is pinned to this member key (as `forget` reads it)
+   * and does not show it out (that account's list still holds this device by it), or null for none. A copy that does
+   * not read counts as holding it.
    */
   pinnedElsewhere(account: string, key: string): Promise<string | null>;
   /**
@@ -734,6 +735,21 @@ export function accountList(options: AccountListOptions): AccountList {
     shown = view;
     if (!same) for (const listener of listeners) listener(view);
     return view;
+  };
+
+  /**
+   * Whether a saved copy is pinned to this member key: under it, or under a key whose place the copy shows handed on to
+   * it, whether that member is in or put out since (a carried device's copy stays pinned to its sign-in key).
+   */
+  const pinnedTo = (copy: FollowerCopy, member: string): boolean => {
+    if (copy.me.key === member) return true;
+    if (copy.state === null) return false;
+    let at: string | null = copy.me.key;
+    for (let steps = 0; at !== null && steps <= copy.state.footing.seq; steps += 1) {
+      at = heirOf(copy.state, at);
+      if (at === member) return true;
+    }
+    return false;
   };
 
   /**
@@ -1553,6 +1569,14 @@ export function accountList(options: AccountListOptions): AccountList {
             return await once(session, bound, stop.signal);
           } catch (error) {
             if (stop.signal.aborted) return shown;
+            if (error instanceof SignedOutError) {
+              const still = await service.session();
+              if (still !== undefined && !sameSignIn(still, session)) {
+                held = null;
+                misses = 0;
+                return publish(OFF);
+              }
+            }
             // another page saved the copy under this round: it loads what is saved now and takes its pages again
             if (!(error instanceof StaleCopyError)) throw error;
             if (tries >= SAVE_TRIES) {
@@ -1639,7 +1663,7 @@ export function accountList(options: AccountListOptions): AccountList {
         // the wraps are asked for with a time of their own: the pages before them may have used up the round's
         view = await viewOf(next, keys, reached ? { bound, signal: AbortSignal.any([stopped, AbortSignal.timeout(ROUND_MS)]) } : null);
       } catch (error) {
-        if (stopped.aborted || error instanceof StaleCopyError || loaded.copy === null) throw error;
+        if (stopped.aborted || error instanceof SignedOutError || error instanceof StaleCopyError || loaded.copy === null) throw error;
         // The round failed past the copy this device saved (a store that takes no write, a fault of the reading). The
         // device still goes by that copy: it is shown as it was saved, as a list the account service was not reached
         // for, so a page never draws or opens by the account service's word alone while it holds a copy. The fault
@@ -1801,7 +1825,7 @@ export function accountList(options: AccountListOptions): AccountList {
         const read = await readSave(saved);
         if (!read.read) return other;
         const { me, state } = read.copy;
-        if (me.key !== key || me.endpoint !== null) continue;
+        if (!pinnedTo(read.copy, key) || me.endpoint !== null) continue;
         if (state === null || (state.signers[key]?.ended ?? null) === null) return other;
       }
       return null;
@@ -2024,7 +2048,7 @@ export function accountList(options: AccountListOptions): AccountList {
           if (saved === undefined) return true;
           if (typeof saved !== "string") return false;
           const read = await readSave(saved);
-          if (!read.read || read.copy.me.key !== member || read.copy.me.endpoint !== null) return false;
+          if (!read.read || !pinnedTo(read.copy, member) || read.copy.me.endpoint !== null) return false;
           if (await store.drop(account, saved)) return true;
         }
         return false;

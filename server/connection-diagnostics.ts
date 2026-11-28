@@ -5,10 +5,12 @@ import type { ClearReason } from "./account/pc-binding.ts";
 
 type AccessEvent =
   | { event: "relay.session.accepted"; origin: "local-pairing" | "account"; role: DeviceRole; device_no: number | null }
-  | { event: "relay.session.closed"; reason: SessionError }
+  /** `carrier_lost`: nothing ended the session, its channel went away (the device's side closed, or the relay link dropped). */
+  | { event: "relay.session.closed"; reason: SessionError | "carrier_lost" }
   | { event: "account.snapshot.refused"; status: 403; reason: "not_listed" }
   | { event: "account.listing.replaced" }
   | { event: "account.binding.cleared"; reason: ClearReason }
+  | { event: "account.binding.moved" }
   | { event: "account.sessions.closed"; count: number }
   /** The signed list would have decided a sign-in otherwise than the snapshot did (server/account/list-follow.ts): no key, no name. */
   | { event: "account.list.differs"; snapshot: "admitted" | "none"; list: string; of: "credential" | "device" }

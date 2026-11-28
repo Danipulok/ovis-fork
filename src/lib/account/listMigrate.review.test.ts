@@ -4,7 +4,7 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { act, createElement } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { openPage, type Page } from "../page.fixture.ts";
 import { MIGRATION_ANSWER_SECONDS, type PcAnswer } from "../../../shared/account-list-migrate.ts";
 import { listView, readKind } from "../../../shared/account-list.ts";
 import { entryFromText, readBody } from "../../../shared/account-list-entry.ts";
@@ -16,6 +16,7 @@ import { askingPc, listWorld, type AskingPc, type WorldDevice } from "./accountL
 import { rememberDevice } from "./join.ts";
 import { MOVE_AGAIN_SECONDS, ownRemovals, pcAnswers, readBirth, type MoveNoticeView } from "./listMigrate.ts";
 import type { SeenPcs } from "./seenPcs.ts";
+import { AccountServiceError } from "./service.ts";
 import { keepUnsent, postKept } from "./unsentBlocks.ts";
 
 const DAY = 86400;
@@ -123,6 +124,17 @@ describe("H1: R-F, a key this device blocked itself is never carried, sent or no
     await keepUnsent(phone.device.store, phone.device.session, [block]);
     await postKept(phone.device.store, phone.device.session, [block], async () => {});
     expect(await ownRemovals(phone.device.store, world.account)).toContain(laptop.signIn);
+  });
+
+  test("F6: a block the account service refused for good holds no move: the birth goes at once, without the blocked key", async () => {
+    const { phone, laptop, world, carriedSent, birthsSent } = await inUse(movingWorld(), { ownRemovals: true });
+    const block = { v: 1, kind: "block", id: "a".repeat(64), account: world.account, target: laptop.signIn, target_no: 2, signer: phone.signIn, signer_no: 1, signed_at: "2026-11-25T00:00:00Z", nonce: "n", signature: "s" } as never;
+    await keepUnsent(phone.device.store, phone.device.session, [block]);
+    expect(await postKept(phone.device.store, phone.device.session, [block], async () => { throw new AccountServiceError(403, "unknown_target", "x"); })).toBe("refused");
+    expect(Object.values(await phone.device.store.get("unsent_blocks") ?? {}).map((entry) => entry.refused)).toEqual([true]);
+    expect((await phone.device.list.sync()).status).toMatchObject({ at: "following", standing: "in", list: world.held().id });
+    expect(birthsSent(phone.device)).toHaveLength(1);
+    expect(carriedSent(phone.device)).not.toContain(laptop.signIn);
   });
 
   test("H1: an unsent block is never carried (the half that holds)", async () => {
@@ -241,44 +253,24 @@ describe("M1: a carried device's notice leaves out its own row", () => {
 });
 
 describe("M2: who made the list has Not me (R-G)", () => {
-  const globals = new Map<string, PropertyDescriptor | undefined>();
-  let renderer: ReactTestRenderer | undefined;
-  const setGlobals = () => {
-    for (const [key, value] of Object.entries({
-      IS_REACT_ACT_ENVIRONMENT: true, window: new EventTarget(), location: new URL("https://app.ovis.sh/"),
-      document: Object.assign(new EventTarget(), { visibilityState: "visible", querySelector: () => null, documentElement: { dataset: {}, style: { setProperty() {}, removeProperty() {} } } }),
-      getComputedStyle: () => ({ getPropertyValue: () => "" }), navigator: { languages: ["en"] }, localStorage: { getItem: () => null, setItem: () => {} },
-    })) {
-      globals.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
-      Object.defineProperty(globalThis, key, { value, configurable: true });
-    }
-  };
-  afterEach(() => {
-    act(() => renderer?.unmount());
-    renderer = undefined;
-    for (const [key, descriptor] of globals) {
-      if (descriptor === undefined) delete (globalThis as Record<string, unknown>)[key];
-      else Object.defineProperty(globalThis, key, descriptor);
-    }
-    globals.clear();
-  });
+  let page: Page;
+  afterEach(async () => { await page.close(); });
   const LIST = "5c".repeat(32);
   const following: AccountListView = { account: "acct_moved", reached: true, status: { at: "following", list: LIST, standing: "in", head: 5, read_at: 1, trouble: null }, devices: [], pcs: [] };
   const listWith = (notice: MoveNoticeView) => ({ view: () => following, subscribe: () => () => {}, notice: async () => notice, noticeSeen: async () => {} }) as unknown as AccountList;
   const settle = async (): Promise<void> => { await act(async () => { for (let turn = 0; turn < 5; turn += 1) await Promise.resolve(); }); };
 
   test("M2: on a device the move carried in, the device that made the list can be answered Not me", async () => {
-    setGlobals();
+    page = openPage("https://app.ovis.sh/");
+    Object.defineProperty(page.window.navigator, "languages", { configurable: true, value: ["en"] });
     const notice: MoveNoticeView = { list: LIST, first: { self: false, key: "G", name: { label: "Phone", os: null } }, devices: [], pcs: [], removed: [] };
     const asked: [string, string][] = [];
-    await act(async () => {
-      renderer = create(createElement(SettingsProvider, null, createElement(ListMoveNotice, { list: listWith(notice), notMeDevice: (key: string, name: string) => { asked.push([key, name]); } })));
-    });
+    await page.render(createElement(SettingsProvider, null, createElement(ListMoveNotice, { list: listWith(notice), notMeDevice: (key: string, name: string) => { asked.push([key, name]); } })));
     await settle();
-    expect(JSON.stringify(renderer!.toJSON())).toContain("Phone made your account's list.");
-    const notMe = renderer!.root.findAll((node) => node.type === "button" && node.props.children === "Not me");
+    expect(page.window.document.body.textContent).toContain("Phone made your account's list.");
+    const notMe = [...page.window.document.body.querySelectorAll("button")].filter((button) => button.textContent === "Not me");
     expect(notMe).toHaveLength(1);
-    await act(async () => { notMe[0]!.props.onClick(); });
+    await act(async () => { notMe[0]?.click(); });
     expect(asked).toEqual([["G", "Phone"]]);
   });
 });

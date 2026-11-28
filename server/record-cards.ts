@@ -3,7 +3,8 @@ import { paneTranscript, type NativeTranscript } from "./conversation.ts";
 import { ConversationUnavailable } from "./conversation-shared.ts";
 import { lettaMessagesPath } from "./letta-store.ts";
 import { grokHeldTranscript } from "./grok-store.ts";
-import { sessionSnapshot } from "./herdr/client.ts";
+import { paneProcessInfo, sessionSnapshot } from "./herdr/client.ts";
+import { readKiroV3MessagesTail } from "./kiro.ts";
 import { FileBusyError, fileTask } from "./file-pool.ts";
 import { AgyUnavailable, agyPendingStepsOffThread } from "./agy.ts";
 import { hermesPendingMessagesOffThread } from "./hermes.ts";
@@ -17,6 +18,7 @@ import { copilotRecord } from "./dialogs/copilot-record.ts";
 import { museRecord } from "./dialogs/muse-record.ts";
 import { agyRecord } from "./dialogs/agy-record.ts";
 import { hermesRecord } from "./dialogs/hermes-record.ts";
+import { kiroRecord } from "./dialogs/kiro-record.ts";
 
 /**
  * Where an agent's record of a pane's session says which command waits (`read`), and the dialog that shows it.
@@ -68,6 +70,13 @@ const RECORDS: Readonly<Record<string, RecordSource>> = {
     const found = await paneTranscript(paneId);
     return found.source === "hermes-transcript"
       ? within(`${found.path}\0${found.sessionId}`, hermesRecord.pending(await hermesPendingMessagesOffThread(found.path, found.sessionId))) : undefined;
+  } },
+  // Kiro CLI V3's messages.jsonl, read under a single lease- and inode-verified binding (kiro.ts)
+  // its own approval card takes it (prompt.ts), the generic card too
+  kiro: { record: kiroRecord, read: async (paneId) => {
+    const info = await paneProcessInfo(paneId).catch(() => null);
+    const found = await readKiroV3MessagesTail(info);
+    return found === null ? undefined : within(`${found.path}\0${found.identity}`, kiroRecord.pending(found.text));
   } },
 };
 
@@ -143,5 +152,27 @@ export async function withAgentRecord(paneId: string, agent: string, card: Inter
   if (source === undefined || parsed === undefined || !parsed.responder.startsWith("fallback")) return card;
   if (commandCut(screen, source.record)) return null;
   const shown = withRecord(parsed, await recordRequest(paneId, agent), screen, source.record);
+  return shown === parsed ? card : publicPrompt(shown);
+}
+
+/** Same as `withAgentRecord`, reusing an already-resolved gjc session file path so callers avoid a second transcript lookup. */
+export async function withGjcRecordAt(paneId: string, card: InteractivePrompt, screen: string, path: string | null): Promise<InteractivePrompt | null> {
+  const parsed = parsedByPublicPrompt.get(card);
+  if (parsed === undefined || !parsed.responder.startsWith("fallback")) return card;
+  if (commandCut(screen, gjcRecord)) return null;
+  if (path === null) return card;
+  let request: RecordRequest | null = null;
+  try {
+    request = within(path, gjcRecord.pending(await tail(path)));
+  } catch (error) {
+    if (!(error instanceof FileBusyError) && (error as NodeJS.ErrnoException).code !== "ENOENT") {
+      const kind = `gjc\0${error instanceof Error ? error.name : typeof error}`;
+      if (!unreadable.has(kind)) {
+        unreadable.add(kind);
+        console.warn(`prompt: gjc's record could not be read for pane ${paneId}; its card stays the screen's (${error instanceof Error ? error.message : String(error)})`);
+      }
+    }
+  }
+  const shown = withRecord(parsed, request, screen, gjcRecord);
   return shown === parsed ? card : publicPrompt(shown);
 }

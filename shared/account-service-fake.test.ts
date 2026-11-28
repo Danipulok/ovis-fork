@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import nacl from "tweetnacl";
+import { x25519 } from "@noble/curves/ed25519.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { exportAccountKey, newRecordId, pcAddSigningBytes, signAccountRecord, signSafetyRecord, type AccountRecord, type PcAddPurpose } from "./account-records.ts";
 import { assembleSnapshot, parseSnapshotPage, type AccountSnapshotPage } from "./account-snapshot.ts";
@@ -20,7 +20,7 @@ async function client() {
 }
 
 function pc() {
-  const keys = nacl.box.keyPair();
+  const keys = x25519.keygen();
   return { keys, serverId: deriveServerId(keys.publicKey), publicKey: bytesToHex(keys.publicKey) };
 }
 
@@ -591,6 +591,24 @@ describe("the fake's snapshot wire (device table P6, G1, P16)", () => {
     expect(parseSnapshotPage((await read(service, machine, {})).body).freezes.map((line) => line.block)).toEqual([block.id]);
   });
 
+  test("as the service, a signer signs only on the sign-in that registered its key: another sign-in of the account is refused, a kept record too", async () => {
+    const service = new FakeAccountService();
+    service.opensAll = true;
+    const [first, later] = [service.issueToken("acct_1"), service.issueToken("acct_1")];
+    const [phone, stranger] = [await client(), await client()];
+    const phoneNo = service.registerSessionKey(first, phone.spki, "Phone");
+    const strangerNo = service.registerDevice("acct_1", stranger.spki, "Stranger");
+    const block = await signSafetyRecord({ v: 1, account: "acct_1", signed_at: new Date().toISOString(), kind: "block", target: stranger.spki, target_no: strangerNo,
+      signer: phone.spki, signer_no: phoneNo, nonce: newRecordId() }, phone.pair.privateKey);
+    const sent = async (token: string) => {
+      const response = await service.fetch(post("/v1/safety-records", { record: block }, token));
+      return { status: response.status, code: ((await response.json()) as { error?: { code: string } }).error?.code };
+    };
+    expect(await sent(later)).toEqual({ status: 403, code: "signer_not_member" });
+    expect(await sent(first)).toEqual({ status: 200, code: undefined });
+    expect(await sent(later)).toEqual({ status: 403, code: "signer_not_member" });
+  });
+
   test("a block from an older device commits whole and a lift ends its freeze line", async () => {
     const service = new FakeAccountService();
     service.opensAll = true;
@@ -1143,5 +1161,39 @@ describe("PC invites (POST /v1/pc-invites, /v1/pc-invites/redeem)", () => {
     expect(((await list()).body.invites as { id: string }[]).map((entry) => entry.id)).toEqual([used.id as string]);
     now += 24 * 60 * 60_000;
     expect((await list(service.issueToken("acct_1"))).body.invites).toEqual([]);
+  });
+});
+
+describe("what a PC moving between accounts reads of the service", () => {
+  async function proved(service: FakeAccountService, machine: ReturnType<typeof pc>, path: string, body: Record<string, unknown>) {
+    const challenge = await (await service.fetch(post("/v1/pc/challenge", { server_id: machine.serverId, public_key: machine.publicKey }))).json() as { challenge_id: string; frame: string };
+    const proof = answerServerChallenge(challenge.frame, machine.keys.secretKey, { server_id: machine.serverId, role: "account", connection_id: challenge.challenge_id });
+    return service.fetch(post(path, { server_id: machine.serverId, challenge_id: challenge.challenge_id, proof, ...body }));
+  }
+
+  test("an admit repeated within ten minutes answers the admission it made, also after the PC took it", async () => {
+    const service = new FakeAccountService();
+    service.opensAll = true;
+    service.completions = true;
+    const token = service.issueToken("acct_1", { twoStep: true });
+    const machine = pc();
+    const send = (method: string, path: string, body?: unknown) => service.fetch(new Request(BASE + path, { method,
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }));
+    expect((await send("PUT", `/v1/pcs/${machine.serverId}`, { label: "pc", public_key: machine.publicKey, relay: "wss://relay.ovis.sh" })).status).toBe(200);
+    const first = await (await send("POST", `/v1/pcs/${machine.serverId}/admit`, {})).json() as { admitted_at: string };
+    expect((await proved(service, machine, "/v1/pc/admission", { account: "acct_1", with_listing_id: true })).status).toBe(200);
+    const admitted = async () => (await (await proved(service, machine, "/v1/pc/mailbox", { account: "acct_1", with_listing_id: true })).json() as { listing_admitted: boolean }).listing_admitted;
+    expect(await admitted()).toBe(true);
+    const again = await send("POST", `/v1/pcs/${machine.serverId}/admit`, {});
+    expect(again.status).toBe(200);
+    expect((await again.json() as { admitted_at: string }).admitted_at).toBe(first.admitted_at);
+    expect(await admitted()).toBe(true);
+  });
+
+  test("a service that issues no relay pass answers 503 relay_pass_unavailable", async () => {
+    const service = new FakeAccountService();
+    const response = await proved(service, pc(), "/v1/pc/relay-pass", { account: "acct_1", pass_versions: [1, 2] });
+    expect(response.status).toBe(503);
+    expect((await response.json() as { error: { code: string } }).error.code).toBe("relay_pass_unavailable");
   });
 });

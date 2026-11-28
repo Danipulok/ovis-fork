@@ -21,7 +21,7 @@ import type { RelayOffer } from "../../../shared/relay-offer.ts";
 import type { KnownPc } from "../account/knownPcs.ts";
 import type { MyPc } from "../account/myPcs.ts";
 import { ACCOUNT_PROVIDERS, type AccountProvider, type AccountSession, type SignInKey } from "../account/store.ts";
-import { inNativeApp } from "../nativeApp.ts";
+import { inNativeApp, onIos } from "../nativeApp.ts";
 import { serverIdOfPath } from "../shellMode.ts";
 import { RelayAdmissionTimeoutError, RelayNewSessionsRefusedError, RelayRefusedError, RelayUnreachableError, UnsafeRelayDestinationError } from "./channel.ts";
 import { ServerIdentityChangedError } from "./device.ts";
@@ -74,10 +74,12 @@ export type RelayFailure = "pc-offline" | "pc-unresponsive" | "relay-unreachable
   /**
    * A join that brought this device's card to a PC that lets devices in by its account's signed list, and no entry of
    * the list let it in: no sign-in of the account claimed its key; the entry could not be placed in time; a device of
-   * the account allowed it and no entry reached the PC; Ovis on the PC is too old to sign for the list; anything
-   * else. `list-other`: the PC follows another list than this device's account's, said before any digits.
+   * the account allowed it and no entry reached the PC; Ovis on the PC is too old to sign for the list; the PC joined
+   * by an invite, or came in as its account moved with no key of its own (`list-pc-needs-keys`), and signs for nobody;
+   * the PC keeps this very device out by a block there (`list-pc-held`), whatever the list holds; anything else.
+   * `list-other`: the PC follows another list than this device's account's, said before any digits.
    */
-  | "list-not-claimed" | "list-not-placed" | "list-not-in" | "list-pc-behind" | "list-refused" | "list-other"
+  | "list-not-claimed" | "list-not-placed" | "list-not-in" | "list-pc-behind" | "list-pc-invited" | "list-pc-needs-keys" | "list-pc-held" | "list-refused" | "list-other"
   /** the sign-in a marked pairing stopped for took longer than its code is good for: only a new scan pairs */
   | "scan-expired";
 
@@ -90,7 +92,7 @@ export type PcUpdate =
   | { phase: "failed"; detail: string | null };
 
 export type AccountView =
-  | { kind: "signed-out"; error: string | null; provider?: AccountProvider; notice?: string }
+  | { kind: "signed-out"; error: string | null; provider?: AccountProvider; notice?: string; hint?: import("../account/accountHint.ts").AccountHint }
   | { kind: "signing-in"; provider?: AccountProvider }
   /** `known`: the read failed, and these are the account's PCs this device listed at its last read that answered (knownPcs) */
   | {
@@ -186,7 +188,8 @@ export function offerOf(device: RelayDevice): RelayOffer {
 /** The causes a PC names when a join into its account's list ends with nobody let in (docs/account.md, "A PC allows a device into the list"). */
 const LIST_JOIN_CAUSES: Readonly<Record<string, RelayFailure>> = {
   list_not_claimed: "list-not-claimed", list_service_away: "list-not-placed", list_head_lost: "list-not-placed",
-  list_not_in: "list-not-in", list_pc_behind: "list-pc-behind", list_refused: "list-refused",
+  list_not_in: "list-not-in", list_pc_behind: "list-pc-behind", list_not_signer: "list-pc-invited", list_needs_keys: "list-pc-needs-keys",
+  list_held_here: "list-pc-held", list_refused: "list-refused",
 };
 
 export function failureOf(error: unknown, attempt: { code: boolean; paired: boolean; compared?: boolean; codeless?: boolean }): RelayFailure {
@@ -237,8 +240,7 @@ export function forgetsDevice(failure: RelayFailure): boolean {
 
 /** An iPhone or iPad browser tab, where the page's storage may be cleared after a week unvisited; the installed app's is kept. */
 export function iosBrowserTab(env: { userAgent: string; maxTouchPoints: number; standalone: boolean | undefined }): boolean {
-  const ios = /iPhone|iPad|iPod/.test(env.userAgent) || (/Macintosh/.test(env.userAgent) && env.maxTouchPoints > 1);
-  return ios && env.standalone !== true && !inNativeApp();
+  return onIos(env) && env.standalone !== true && !inNativeApp();
 }
 
 export interface RelayShellMount {

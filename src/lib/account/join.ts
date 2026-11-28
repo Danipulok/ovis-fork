@@ -4,6 +4,7 @@
  */
 import { ACCOUNT_ENROLL_MAX, AccountRecordError, accountDeviceId, isAccountKeyEncoding, newRecordId, readAccountRecord, signAccountRecord } from "../../../shared/account-records.ts";
 import type { AddRecord, LinkRecord, RemoveRecord } from "../../../shared/account-records.ts";
+import { isSignInMethod, type SignInMethod } from "../../../shared/account-devices-api.ts";
 import { isWssOrigin } from "../../../shared/relay-offer.ts";
 import type { RemotePairingRequest } from "../../../shared/protocol.ts";
 import type { RelayDevice, RelayDeviceStore } from "../relay/device.ts";
@@ -49,6 +50,8 @@ export async function post(fetch: PcFetch, path: string, body: unknown): Promise
 export interface PcAccountStatus {
   readonly pcAddFromAccount?: true | "unavailable";
   readonly account: string | null;
+  /** how the owner who added this PC to `account` signed in to it; absent when the PC does not know (an older Ovis, or no such naming) */
+  readonly provider?: SignInMethod;
   readonly unlinked: readonly string[];
   /** the signed `remove`s behind its tombstones, as it says: unchecked until keepRemovals verifies them */
   readonly removals: readonly unknown[];
@@ -62,6 +65,8 @@ export interface PcAccountStatus {
   readonly blockedAll?: boolean;
   /** it waits for its first member's enrollment; absent from an Ovis from before enrollments */
   readonly enrolling?: boolean;
+  /** it follows its account's list with no key of its own in it (it came in as the account moved): its add by the list gives it one */
+  readonly needsKeys?: true;
   /** its account stopped listing it: only an add made at the PC brings it into one again, so a device sends it no link */
   readonly pcAddRequired?: true;
 }
@@ -74,6 +79,7 @@ export async function pcAccountStatus(fetch: PcFetch, options: { fresh?: boolean
   const unlinked = Array.isArray(body.unlinked) ? body.unlinked.filter((id): id is string => typeof id === "string") : [];
   return {
     account: typeof body.account === "string" ? body.account : null, unlinked,
+    ...(typeof body.account === "string" && isSignInMethod((body as { account_provider?: unknown }).account_provider) ? { provider: (body as { account_provider: SignInMethod }).account_provider } : {}),
     ...("pc_add_from_account" in body && (body.pc_add_from_account === true || body.pc_add_from_account === "unavailable")
       ? { pcAddFromAccount: body.pc_add_from_account } : {}),
     removals: Array.isArray(body.removals) ? body.removals : [], adds: Array.isArray(body.adds) ? body.adds : [],
@@ -83,6 +89,7 @@ export async function pcAccountStatus(fetch: PcFetch, options: { fresh?: boolean
     ...((body as { blocked_all?: unknown }).blocked_all === true ? { blockedAll: true } : {}),
     ...(typeof (body as { enrolling?: unknown }).enrolling === "boolean" ? { enrolling: (body as { enrolling: boolean }).enrolling } : {}),
     ...((body as { pc_add_required?: unknown }).pc_add_required === true ? { pcAddRequired: true as const } : {}),
+    ...((body as { list?: { needs_keys?: unknown } | null }).list?.needs_keys === true ? { needsKeys: true as const } : {}),
   };
 }
 

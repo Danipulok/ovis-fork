@@ -5,7 +5,11 @@ import type { ServerContext } from "../dispatch.ts";
 import { RELAY_CONTROLS } from "../dispatch-routes.ts";
 import { accountLabel } from "../../shared/account-asker.ts";
 import { updateRequestAllowed } from "../update-api.ts";
+import { joinVerdict } from "./join-verdict.ts";
 import { ACCOUNT_ID, AccountServiceOffError, NoAccountNamedError, ResetNotAskedError, ResetRegistryUnavailableError } from "./service.ts";
+
+/** Why an approval of a join marked `list_unknown` (pairing-approvals.ts) let nobody in, as `ovis approve` says it. */
+const LIST_UNKNOWN_JOIN = "That device cannot be let in here: this PC lets devices into your account by its signed list, and the device asked as an Ovis older than 0.5.10 does. Update Ovis on it, then have it ask to join again.";
 
 /**
  * Drive authority and the outer origin gate are shared with Portal in dispatch.ts. `caller`: the paired device
@@ -31,6 +35,17 @@ export async function handleRelayRequest(request: Request, pathname: string, con
   const listAllower = (): boolean | null => peer.kind === "relay" && peer.key !== "" ? context.services.accountList?.allowsJoins(peer.key) ?? null : null;
   const cannotAllow = () => fail("list_cannot_allow", "This device is in your account's list, but only a device that can add devices to the list may let one in.", 403);
   const accountRequired = () => fail("account_required", "Approve pairings on this PC, or from a device linked to your account.", 403);
+  // what keeps the key of a join of no list out if it is approved here, read now: `held_why` (join-verdict.ts), and
+  // `list_held` for a block or a freeze, which older readers know
+  const heldHere = (key: string | null) => {
+    const verdict = key === null ? null : joinVerdict(context.services, key);
+    if (verdict?.lets !== "out" || verdict.why === null) return {};
+    return { held_why: verdict.why, ...verdict.why === "block" || verdict.why === "freeze" ? { list_held: true as const } : {} };
+  };
+  // the answer to an approval here of a join of no list says what keeps it out as the approval was taken (null:
+  // nothing), which may differ from what its list said a moment before
+  const approvedHere = (join: { readonly list?: boolean } | undefined, key: string | null) =>
+    reply({ ok: true, ...join !== undefined && join.list !== true ? { held_why: null, ...heldHere(key) } : {} });
   if (pathname === "/api/relay/pairings" && request.method === "GET") {
     setRequestRoute("/api/relay/pairings");
     if (peer.kind !== "relay") return reply({ pairings: service.approvals.list() });
@@ -44,10 +59,19 @@ export async function handleRelayRequest(request: Request, pathname: string, con
     setRequestRoute("/api/relay/joins");
     if (!own) return fail("own_window_required", "Only this PC's own window lists account joins.", 403);
     // a join into the list that this PC cannot sign says why before anybody approves it here: its Ovis is behind the
-    // list, or it joined by an invite and signs for nobody (a device of the account allows it then)
-    const refusal = context.services.accountList?.allowRefusal();
-    const why = refusal === "behind" ? { list_behind: true as const } : refusal === "not_signer" ? { list_not_signer: true as const } : null;
-    return reply({ joins: service.approvals.ownJoins().map((join) => why !== null && join.list === true ? { ...join, ...why } : join) });
+    // list, it joined by an invite and signs for nobody, or it came in as its account moved with no key of its own
+    // (a device of the account allows it then); and one whose key this PC itself keeps out says that, list or not: a
+    // join of no list says why (`held_why`, join-verdict.ts), and `list_held` still marks a block for an older reader
+    const list = context.services.accountList;
+    const refusal = list?.allowRefusal();
+    const why = refusal === "behind" ? { list_behind: true as const } : refusal === "not_signer" ? { list_not_signer: true as const }
+      : refusal === "needs_keys" ? { list_needs_keys: true as const } : null;
+    return reply({ joins: service.approvals.ownJoins().map((join) => {
+      const key = service.approvals.keyOf(join.id);
+      if (join.list !== true) return { ...join, ...heldHere(key) };
+      const held = key !== null && list?.holdsBack(key) === true ? { list_held: true as const } : {};
+      return { ...join, ...why ?? {}, ...held };
+    }) });
   }
   if (request.method !== "POST") return fail("method_not_allowed", "Use GET for status and POST for relay actions.", 405);
   if (pathname === RELAY_CONTROLS.pairing && peer.kind === "relay") {
@@ -80,6 +104,7 @@ export async function handleRelayRequest(request: Request, pathname: string, con
       // a join into the list is approved only once the new device confirmed its digits (`confirmed` in the list of
       // waiting joins): its approver signs the device's entry, and signs for nobody who gave up before that
       if (outcome.outcome === "not_confirmed") return fail("not_confirmed", "That device has not confirmed its digits yet. Allow it once it has.", 409);
+      if (outcome.outcome === "list_unknown") return fail("list_unknown", LIST_UNKNOWN_JOIN, 409);
       return outcome.outcome === "gone"
         ? fail("relay_pairing_gone", "That device is no longer waiting: it left, was decided, or its time ran out.", 404)
         : fail("wrong_digits", "Those are not the digits the new device shows; it was not let in.", 409);
@@ -189,20 +214,25 @@ export async function handleRelayRequest(request: Request, pathname: string, con
         // a first join (no member could approve it) is allowed or declined by a tap, its digits compared on this screen
         if (typeof body.id === "string" && (body.decision === "approve" || body.decision === "decline")) {
           const key = service.approvals.keyOf(body.id);
+          const asked = service.approvals.ownJoins().find((join) => join.id === body.id);
           const tapped = service.approvals.decideOwn(body.id, body.decision === "approve");
           if (tapped === "gone") return fail("relay_pairing_gone", "That device is no longer waiting: it left, was decided, or its time ran out.", 404);
           if (tapped === "typed_only") return fail("digits_required", "Type the six digits the new device shows.", 409);
+          if (tapped === "list_unknown") return fail("list_unknown", LIST_UNKNOWN_JOIN, 409);
           // the person at this PC declined that device: what this PC signed for it and keeps goes too
           if (body.decision === "decline" && key) context.services.accountList?.declinedHere(key);
-          return reply({ ok: true });
+          return body.decision === "approve" ? approvedHere(asked, key) : reply({ ok: true });
         }
         if (typeof body.id !== "string" || typeof body.digits !== "string" || !/^[0-9]{6}$/.test(body.digits)) {
           return fail("invalid_relay_join", "Send the join's id and the six digits the new device shows, or a decision of approve or decline for a first join.", 400);
         }
+        const key = service.approvals.keyOf(body.id);
+        const asked = service.approvals.ownJoins().find((join) => join.id === body.id);
         const outcome = service.approvals.decideTyped(body.id, body.digits);
         if (outcome === "gone") return fail("relay_pairing_gone", "That device is no longer waiting: it left, was decided, or its time ran out.", 404);
         if (outcome === "wrong_digits") return fail("wrong_digits", "Those are not the digits the new device shows; it was not let in.", 409);
-        return reply({ ok: true });
+        if (outcome === "list_unknown") return fail("list_unknown", LIST_UNKNOWN_JOIN, 409);
+        return approvedHere(asked, key);
       }
       case RELAY_CONTROLS.direct: {
         setRequestRoute("/api/relay/direct");

@@ -7,7 +7,7 @@ import { openGroupItems, useGroupClosedWhenEmpty, useMoreMenu } from "./lib/more
 import { layoutActions } from "./lib/layoutActions.ts";
 import { displayPaneTitle, storedBackgroundFolded, storedWorktreeCollapsed, tabPaneTitle } from "./components/Sidebar.tsx";
 import { endSignIn } from "./lib/signOut.ts";
-import { PaneCanvas } from "./components/PaneCanvas.tsx";
+import { PaneCanvas, type PaneActions } from "./components/PaneCanvas.tsx";
 import { MachineSessionsProvider } from "./lib/machineSessionContext.tsx";
 import { PaneTerminal } from "./components/PaneTerminal.tsx";
 import { paneCovered, paneContentKey, paneContentPresented } from "./lib/panePresentation.ts";
@@ -46,9 +46,10 @@ import { linksSomewhere, readLink } from "./lib/deepLink.ts";
 import { pageSearch } from "./lib/pageQuery.ts";
 import { copyText } from "./lib/clipboard.ts";
 import { CommandPalette } from "./components/CommandPalette.tsx";
-import { AppLayoutContext, appLayoutOf, MachineContext } from "./lib/machineContext.tsx";
+import { AppLayoutContext, appLayoutOf, MachineContext, MachineRosterContext } from "./lib/machineContext.tsx";
 import { addPcExit, addPcMoreItem, MachineActionBanner, MachineSidebar } from "./components/MachineSidebar.tsx";
 import { SidebarResizer } from "./components/SidebarResizer.tsx";
+import { BackgroundAgentAnnouncer } from "./components/BackgroundAgentAnnouncer.tsx";
 import { type PanePresence, useSidebarActivityState } from "./lib/sidebarActivity.tsx";
 import { useAgentStateStamping } from "./lib/useAgentStateSince.ts";
 import { FilePanelResizer } from "./components/FilePanelResizer.tsx";
@@ -90,6 +91,7 @@ import { RelayNotice } from "./components/RelayNotice.tsx";
 import { InstallHint } from "./components/InstallHint.tsx";
 import { DevicePairedNotice, DeviceRemovedNotice } from "./components/DevicePairedNotice.tsx";
 import { NewPcNotices } from "./components/NewPcNotices.tsx";
+import { JoinedNotice } from "./components/JoinedNotice.tsx";
 import { UnconfirmedPcNotices } from "./components/UnconfirmedPcNotices.tsx";
 import { AccountJoinRequests } from "./components/AccountJoinRequests.tsx";
 import { hostedAccountItems } from "./components/AccountHead.tsx";
@@ -98,7 +100,6 @@ import { ownWindowHere } from "./lib/account/addThisPc.ts";
 import { useAccountDeviceNotices } from "./components/AccountDeviceNotices.tsx";
 import { PendingKeys } from "./components/PendingKeys.tsx";
 import { RelayPairingPrompt } from "./components/RelayPairingPrompt.tsx";
-import { AgentToolPaneCard } from "./components/AgentToolPaneCard.tsx";
 import { useOwnWindowPrompts } from "./lib/useOwnWindowPrompts.ts";
 import { pcHeld } from "./lib/relay/newPcHere.ts";
 import { OwnJoinCard } from "./components/OwnJoins.tsx";
@@ -110,7 +111,7 @@ import { folderQueryFor } from "./lib/paletteFolders.ts";
 import { FileViewer } from "./components/FileViewer.tsx";
 import { WebPanel } from "./components/WebPanel.tsx";
 import { BrowserSidePanel } from "./components/BrowserSidePanel.tsx";
-import { useDesktopBrowser, useShownBrowserTab } from "./lib/desktopBrowser.ts";
+import { useBrowserLinkTabs, useDesktopBrowser, useShownBrowserTab } from "./lib/desktopBrowser.ts";
 import { BrowserPanel } from "./components/BrowserPanel.tsx";
 import { BrowserTabsGroup } from "./components/BrowserTabsGroup.tsx";
 import { WebPanelContext } from "./lib/webPanel.ts";
@@ -281,7 +282,7 @@ export function App() {
   const pendingAccess = locked === true ? false : auth === null ? undefined : auth.authenticated && auth.role === "drive" && auth.via !== "open";
   const { pairedNotices, setPairedNotices, dismissPairedNotice, relayPairings, setRelayPairings, remotePairings, setRemotePairings, removedNotices, setRemovedNotices, dismissRemovedNotice, pendingKeys, setPendingKeys, clearPendingKeys } = usePairedNotices(pendingAccess, auth?.role === "watch");
   const ownWindow = ownWindowHere(health?.auth);
-  const { prompts, joins: ownJoins, reread: rereadOwnJoins } = useOwnWindowPrompts(relayPairings, pendingKeys, ownWindow, locked === false);
+  const { prompts, joins: ownJoins, reread: rereadOwnJoins } = useOwnWindowPrompts(relayPairings, pendingKeys, { ownWindow, unlocked: locked === false, machineSessions });
   const updates = useUpdates(locked === false);
   const desktopUpdate = useDesktopUpdate();
   const { selectedPaneId, setSelectedPaneId, notificationViewTarget, setNotificationViewTarget, terminalPeek, setTerminalPeek, endPeek, pendingLink, linkLanded, setLinkLanded, rosterSeq, linkSince, selectionSince, rosterTick, setRosterTick, linkTick, setLinkTick } = useSelectionState({ initialLink });
@@ -304,13 +305,11 @@ export function App() {
     showsChat(pane, lens) && machineSessions.peek(machineId)?.socket.canSearchConversation() === true;
   const { renameRequest, requestRename, clearRenameRequest } = useRenameRequest(selectedMachineId, selectedPaneId);
   const { renameRequest: closeTabRequest, requestRename: requestCloseTab, clearRenameRequest: clearCloseTabRequest } = useRenameRequest(selectedMachineId, selectedPaneId);
-  const moreMenu = useMoreMenu();
   const hostedSignIn = useHostedSignIn();
   // where Add a PC leads on a phone: a PC reached through the hosted app (in a browser or in the phone app, which opens
   // it there) goes to the hosted app's Add a PC, one the phone app opened by its address to the app's own screens
   const addPcTo = addPcExit({ nativeApp: inNativeApp(), relayShell: shellMode() === "relay", pathname: window.location.pathname });
-  const { more, setMore, closeMore, group: moreGroup, openGroup: openMoreGroup, closeGroup: closeMoreGroup } = moreMenu;
-  const paneActionsRef = useRef<((target: HerdrPane, options?: { counted?: boolean }) => RowMenuItem[]) | null>(null);
+  const paneActionsRef = useRef<PaneActions | null>(null);
   const paneLocked = usePaneLocked(selectedMachineId);
   const { filesOpen, setFilesOpen, filesDocked, filesCovered, revealFiles, viewing, openFile, closeFile, hideFile, leaveFile, restoreFile, fileFromPop, forgetLeftFiles, diffViewing, openDiff, closeDiff, releaseDiff, presentation, fileDocked, webPage, closeWebPage, openWebPage, openDiffFile, reportFileKind, toggleFilePresentation, viewFile } = useFilePanels({ settings, filePanelAvailable, selectedPaneId, selectedMachineId });
   // a diff's line notes go to its own pane: none while this window only watches that pane
@@ -534,6 +533,8 @@ export function App() {
     if (viewing !== null && fileDocked) closeFile();
     setBrowserTab(tab);
   };
+  // a web link main opened in the built-in browser (Settings → Browser for links) is shown there once main lists it
+  useBrowserLinkTabs(browserTabs !== null && filePanelAvailable && !inMode && locked === false, (id) => { openBrowserTab("new"); setOpeningTab(id); });
   const browserShown = browserTabs !== null && filePanelAvailable && !inMode && (browserTab === "new" || shownBrowserTab !== null) && webPage === null && !(viewing !== null && fileDocked);
   const panePresence = useCallback((): PanePresence => !(locked === false && linkLanded && pendingFile.current === null && pendingCreate.current === null
     && !drawerOpen && !settingsOpen && !newSessionOpen
@@ -830,16 +831,21 @@ export function App() {
   const cramped = useMediaQuery(CRAMPED_QUERY);
   const paneMenuInMore = selectedPane !== null
     && tabRowHidden(cramped, snapshot?.tabs.filter((tab) => tab.workspace_id === selectedPane.workspace_id).length ?? 0, tabsInHeader || inMode);
+  const moreMenu = useMoreMenu(selectedPane ? paneStorageId(selectedMachineId, selectedPane.pane_id) : null, paneMenuInMore, isSheetWidth);
+  const { more, toggleMore, closeMore, group: moreGroup, openGroup: openMoreGroup, closeGroup: closeMoreGroup, paneActionsInMore } = moreMenu;
   const inboxWide = inMode && wideScreen;
   const moreWaiting = inMode && !inbox.shown && selectedPaneId !== null ? waitingElsewhere(waitingRosters, { machineId: selectedMachineId, paneId: selectedPaneId }) : sessionTally.waiting;
   const waitingInMore = moreWaiting > 0;
-  const currentTabInMore = paneMenuInMore && selectedPane ? snapshot?.tabs.find((tab) => tab.tab_id === selectedPane.tab_id) : undefined;
+  const currentTabInMore = paneActionsInMore && selectedPane ? snapshot?.tabs.find((tab) => tab.tab_id === selectedPane.tab_id) : undefined;
   const currentTabPlace = currentTabInMore && snapshot ? snapshot.tabs.filter((tab) => tab.workspace_id === selectedPane!.workspace_id).indexOf(currentTabInMore) + 1 : 1;
   const currentTabName = currentTabInMore ? (customTabLabel(currentTabInMore, currentTabPlace) ?? tabLabel(currentTabInMore, t, currentTabPlace)) : null;
-  const paneMoreItems = paneMenuInMore && selectedPane ? (paneActionsRef.current?.(selectedPane) ?? []).map((item, index): RowMenuItem => ({
+  const paneMoreItems = paneActionsInMore && selectedPane ? (paneActionsRef.current?.(selectedPane, { includeTabRow: true }) ?? []).map((item, index): RowMenuItem => ({
     ...item, divider: index === 0 || item.divider,
     ...(item.id === "rename-tab" && currentTabName ? { hint: currentTabName, title: `${item.label} · ${currentTabName}` } : {}),
-    run: () => paneActionsRef.current?.(selectedPane).find((fresh) => fresh.id === item.id)?.run(),
+    run: () => {
+      const fresh = paneActionsRef.current?.(selectedPane, { includeTabRow: true }).find((action) => action.id === item.id);
+      if (fresh && !fresh.disabled) fresh.run();
+    },
   })) : [];
   const moreBase = alertsOffDot ? t("More · alerts are off") : t("More");
   const moreLabel = waitingInMore ? `${moreBase} · ${t("{count} waiting for you", { count: moreWaiting })}` : moreBase;
@@ -945,7 +951,7 @@ export function App() {
       current={column && !inbox.shown && selectedPaneId !== null ? sidebarPinKey(selectedMachineId, selectedPaneId) : null}
       onOpen={openThread}
       onNew={openNewOn} questionReads={inbox.questionReads} summaryReads={inbox.summaryReads}
-      more={column ? undefined : { label: moreBase, expanded: more !== null && moreOnList, popup: isSheetWidth ? "dialog" : "menu", onPress: (anchor) => setMore((open) => (open ? null : { anchor })) }}
+      more={column ? undefined : { label: moreBase, expanded: more !== null && moreOnList, popup: isSheetWidth ? "dialog" : "menu", onPress: toggleMore }}
       note={column ? undefined : <HeaderNote note={listNote} />} connection={!column && listNote === null ? rosterConnection : null} failure={error === null ? null : { error, retry: load }} />
   );
   const railFrom = { machineId: selectedMachineId, paneId: inbox.shown ? null : selectedPaneId };
@@ -960,10 +966,7 @@ export function App() {
         title={round ? t("More") : moreLabel}
         aria-haspopup={isSheetWidth ? "dialog" : "menu"}
         aria-expanded={(more !== null && !(inMode && moreOnList && !inboxWide)) || groupItems.length > 0}
-        onClick={(event) => {
-          const anchor = event.currentTarget;
-          setMore((open) => (open ? null : { anchor }));
-        }}
+        onClick={(event) => toggleMore(event.currentTarget)}
       >
         <Ellipsis />
       </button>
@@ -985,11 +988,13 @@ export function App() {
   );
 
   return (
+    <MachineRosterContext.Provider value={machinesRef}>
     <MachineSessionsProvider sessions={machineSessions} machineIds={machines.map((machine) => machine.id)}><MachineContext.Provider value={selectedMachineId}><AppLayoutContext.Provider value={appLayout}><div className={`app${(inMode ? !inboxWide : sidebarCollapsed) ? " sidebar-collapsed" : ""}${inMode ? " is-inbox" : ""}${listScreen ? " is-inbox-list" : ""}${inboxWide ? " is-inbox-wide" : ""}${inboxWide && !inbox.shown && selectedPane !== null && !chatShown ? " is-inbox-terminal" : ""}${tabRoom ? " is-inbox-tab-room" : ""}`} style={sidebarWidth === null && filePanelWidth === null ? undefined : {
       ...(sidebarWidth === null ? {} : { "--sidebar-user-w": `${sidebarWidth}px` }),
       ...(filePanelWidth === null ? {} : { "--file-panel-user-w": `${filePanelWidth}px` }),
     } as CSSProperties}>
       {selectedPane !== null && !guideShown && !inbox.shown && <h1 className="visually-hidden">{selectedTitle}</h1>}
+      <BackgroundAgentAnnouncer machines={sidebarMachines} openMachineId={selectedMachineId} openPaneId={presentedPaneId} />
       {listScreen || inboxWide ? null : <header className={`app-header is-zoned${chatShown ? " is-chat" : ""}${stripInHeader && !phoneTabRow ? " has-tab-row" : ""}${phoneTabRow && stripInHeader ? " has-phone-tabs" : ""}`}>
         <div className="header-side">
           {wideScreen && !sidebarCollapsed && !inMode && <SidebarBrand dark={resolvedTheme === "dark"} />}
@@ -1202,7 +1207,6 @@ export function App() {
         <InstallHint />
         {setupGuide.guide !== null && setupGuide.paused && <SetupGuideResume onResume={setupGuide.resume} />}
         {prompts.length > 0 && <RelayPairingPrompt pairings={prompts} onDecided={rereadOwnJoins} />}
-        {locked === false && <AgentToolPaneCard />}
         {/* an account join a member could approve too: this PC's own window asks for the number itself (OwnJoinCard) */}
         {ownWindow && locked === false && <OwnJoinCard joins={ownJoins} onDecided={rereadOwnJoins} />}
         {/* always there: it keeps what an approval left to say after its request is gone from this PC */}
@@ -1211,6 +1215,7 @@ export function App() {
         {pairedNotices.length > 0 && <DevicePairedNotice events={pairedNotices} onDismiss={dismissPairedNotice} onOpen={(event) => { dismissPairedNotice(event); setSettingsLinkPage("devices"); setSettingsOpen(true); }} />}
         {deviceNotices}
         {health !== null && <NewPcNotices enabled={machineSessions.peek("local")?.socket?.accountOpensAll() === true} ownWindowOf={ownWindowHere(health.auth) ? health.web_ui?.server_id : undefined} signIn={accountSignedIn ?? undefined} />}
+        {health !== null && <JoinedNotice />}
         {/* NewPcNotices above tells of a PC confirmed here; the hosted app's sign-in again comes back to this page, which goes on with the add */}
         {health !== null && <UnconfirmedPcNotices enabled={machineSessions.peek("local")?.socket?.accountOpensAll() === true} tellConfirmed={false}
           onSignInAgain={hostedSignIn?.signInAgain} />}
@@ -1501,5 +1506,6 @@ export function App() {
         view={terminalPeek !== null ? "terminal" : view} actions={actions} watching={viewOnly(selectedMachineId)} inboxMode={inMode} />
       <MarkdownLinkMenu />
     </div></AppLayoutContext.Provider></MachineContext.Provider></MachineSessionsProvider>
+    </MachineRosterContext.Provider>
   );
 }
